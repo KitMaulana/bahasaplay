@@ -1,0 +1,26 @@
+{
+  "name": "BAHASA PLAY — Game-Based LMS Bahasa Indonesia SMA Kelas XII",
+  "short_name": "BAHASA PLAY",
+  "description": "Mainkan gamenya, pelajari bahasanya. Platform LMS berbasis game 3D untuk Bahasa Indonesia Kelas XII SMAN 1 Ciruas.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#020617",
+  "theme_color": "#0f172a",
+  "lang": "id-ID",
+  "icons": [
+    {
+      "src": "/icons/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
