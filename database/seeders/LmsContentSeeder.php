@@ -667,13 +667,20 @@ class LmsContentSeeder extends Seeder
             }
 
             $learningZone = $createdZones['learning'];
+            $stationCoords = [
+                0 => ['board' => [-18, 0, -10], 'npc' => [-15, 0, -10]],
+                1 => ['board' => [0, 0, -22],   'npc' => [-3, 0, -22]],
+                2 => ['board' => [18, 0, -10],  'npc' => [15, 0, -10]],
+            ];
+
             foreach ($def['npcs'] as $idx => $npcData) {
+                $npcPos = $stationCoords[$idx % 3]['npc'] ?? $npcData['position'];
                 $npc = Npc::updateOrCreate(
                     ['zone_id' => $learningZone->id, 'name' => $npcData['name']],
                     [
                         'role_label' => $npcData['role_label'],
                         'appearance' => ['shirtColor' => $npcData['color'], 'skinColor' => '#fde68a'],
-                        'position' => $npcData['position'],
+                        'position' => $npcPos,
                         'rotation_y' => 0,
                         'greeting' => $npcData['greeting'],
                     ]
@@ -698,11 +705,12 @@ class LmsContentSeeder extends Seeder
             }
 
             foreach ($createdMaterials as $idx => $mat) {
+                $boardPos = $stationCoords[$idx % 3]['board'] ?? [($idx - 1) * 12, 0, -12];
                 Interactable::updateOrCreate(
                     ['zone_id' => $learningZone->id, 'label' => 'Papan Materi: '.$mat->title],
                     [
                         'type' => 'board',
-                        'position' => [($idx - 1) * 5, 0, -9],
+                        'position' => $boardPos,
                         'model_key' => 'board',
                         'material_id' => $mat->id,
                         'action' => ['type' => 'open_material', 'material_id' => $mat->id],

@@ -14,6 +14,7 @@ import {
     HelpCircle,
     Lock,
     MapPin,
+    Navigation,
     ShieldCheck,
     Sparkles,
 } from 'lucide-react';
@@ -42,6 +43,7 @@ export default function GameRoot() {
     const [currentQIndex, setCurrentQIndex] = useState(0);
     const [remainingSec, setRemainingSec] = useState(0);
     const [toast, setToast] = useState(null);
+    const [playerPos, setPlayerPos] = useState({ x: 0, z: 12 });
 
     const { data: chapter, isLoading } = useQuery({
         queryKey: ['student-chapter', chapterId],
@@ -148,6 +150,72 @@ export default function GameRoot() {
         return () => clearInterval(timer);
     }, [viewMode, activeAttempt]);
 
+    const totalMaterials = chapter?.materials?.length || 0;
+    const completedMaterials = chapter?.materials?.filter((m) => m.is_completed).length || 0;
+    const materialPercent = totalMaterials > 0 ? Math.round((completedMaterials / totalMaterials) * 100) : 0;
+    const practicePassed = (chapter?.progress?.best_practice_score !== null && chapter?.progress?.best_practice_score !== undefined)
+        ? chapter.progress.best_practice_score >= (chapter.kkm || 75)
+        : chapter?.progress?.practice_status === 'passed';
+    const practiceReady = materialPercent >= 100 || chapter?.progress?.learning_status === 'completed';
+    const examReady = practicePassed;
+    const activeExam = chapter?.exams?.[0];
+
+    // Tentukan objective navigasi aktif
+    const nextUnreadMaterial = chapter?.materials?.find((m) => !m.is_completed) || null;
+    let currentObjective = null;
+
+    if (nextUnreadMaterial) {
+        const order = nextUnreadMaterial.order || 1;
+        const targetPos = order === 1 ? [-18, 0, -10] : order === 2 ? [0, 0, -22] : [18, 0, -10];
+        currentObjective = {
+            kind: 'material',
+            materialId: nextUnreadMaterial.id,
+            title: `Materi #${order}: ${nextUnreadMaterial.title}`,
+            shortTitle: `Pos Materi #${order}`,
+            targetPos,
+            color: '#38bdf8',
+            hint: `Pelajari ${nextUnreadMaterial.title} di Pos Belajar`,
+        };
+    } else if (!practicePassed) {
+        currentObjective = {
+            kind: 'portal_practice',
+            id: 'portal-practice',
+            title: 'Terminal Latihan Soal (Sayap Barat)',
+            shortTitle: 'Terminal Latihan',
+            targetPos: [-34, 0, 10],
+            color: '#f59e0b',
+            hint: 'Materi 100% Selesai! Kerjakan Latihan Soal (Capai KKM 75)',
+        };
+    } else {
+        currentObjective = {
+            kind: 'portal_exam',
+            id: 'portal-exam',
+            title: 'Gerbang Zona Ujian Resmi (Sayap Timur)',
+            shortTitle: 'Gerbang Ujian Resmi',
+            targetPos: [34, 0, 10],
+            color: '#10b981',
+            hint: 'Latihan Lulus! Menuju Gerbang Ujian untuk Ujian Resmi',
+        };
+    }
+
+    let targetDist = 0;
+    let compassDir = 'Utara ⬆️';
+    if (currentObjective && currentObjective.targetPos) {
+        const dx = currentObjective.targetPos[0] - playerPos.x;
+        const dz = currentObjective.targetPos[2] - playerPos.z;
+        targetDist = Math.round(Math.hypot(dx, dz));
+
+        const deg = Math.atan2(dx, -dz) * (180 / Math.PI);
+        if (deg >= -22.5 && deg < 22.5) compassDir = 'Utara ⬆️';
+        else if (deg >= 22.5 && deg < 67.5) compassDir = 'Timur Laut ↗️';
+        else if (deg >= 67.5 && deg < 112.5) compassDir = 'Timur ➡️';
+        else if (deg >= 112.5 && deg < 157.5) compassDir = 'Tenggara ↘️';
+        else if (deg >= 157.5 || deg < -157.5) compassDir = 'Selatan ⬇️';
+        else if (deg >= -157.5 && deg < -112.5) compassDir = 'Barat Daya ↙️';
+        else if (deg >= -112.5 && deg < -67.5) compassDir = 'Barat ⬅️';
+        else if (deg >= -67.5 && deg < -22.5) compassDir = 'Barat Laut ↖️';
+    }
+
     const handleTriggerTarget = (target) => {
         if (!target || !chapter) return;
 
@@ -178,14 +246,28 @@ export default function GameRoot() {
         }
 
         if (target.kind === 'portal_practice') {
+            if (!practiceReady) {
+                setToast({
+                    message: `Selesaikan membaca seluruh materi wajib di Zona Belajar (saat ini ${materialPercent}%) sebelum memulai Latihan Soal.`,
+                    type: 'error',
+                });
+                return;
+            }
             startPracticeMutation.mutate();
             return;
         }
 
         if (target.kind === 'portal_exam') {
-            const activeExam = chapter.exams?.[0];
-            if (activeExam) {
-                startExamMutation.mutate(activeExam.id);
+            if (!examReady) {
+                setToast({
+                    message: `Gerbang Ujian Terkunci! Capai nilai minimal KKM ${chapter.kkm || 75} pada Latihan Soal terlebih dahulu untuk membuka Ujian Resmi.`,
+                    type: 'error',
+                });
+                return;
+            }
+            const exam = chapter.exams?.[0];
+            if (exam) {
+                startExamMutation.mutate(exam.id);
             } else {
                 setToast({ message: 'Belum ada jadwal ujian aktif pada BAB ini.', type: 'error' });
             }
@@ -208,7 +290,7 @@ export default function GameRoot() {
             window.removeEventListener('keydown', onKeyDown);
             window.removeEventListener('keyup', onKeyUp);
         };
-    }, [nearbyTarget, viewMode, chapter]);
+    }, [nearbyTarget, viewMode, chapter, practiceReady, examReady, materialPercent]);
 
     if (isLoading || !chapter) {
         return (
@@ -221,9 +303,6 @@ export default function GameRoot() {
 
     const learningZone =
         chapter.zones?.find((z) => z.type === 'learning') || chapter.zones?.[0];
-    const practiceReady = chapter.progress?.learning_status === 'completed';
-    const examReady = chapter.progress?.practice_status === 'passed';
-    const activeExam = chapter.exams?.[0];
 
     const handleSelectOption = (attemptQuestionId, label) => {
         if (!activeAttempt || activeAttempt.status !== 'in_progress') return;
@@ -515,8 +594,10 @@ export default function GameRoot() {
                         avatarConfig={user?.avatar_config}
                         keysRef={keysRef}
                         onNearbyTargetChange={setNearbyTarget}
+                        onPlayerMove={setPlayerPos}
                         practiceReady={practiceReady}
                         examReady={examReady}
+                        currentObjective={currentObjective}
                     />
                 </Canvas>
             ) : (
@@ -645,12 +726,62 @@ export default function GameRoot() {
                 </div>
             </div>
 
-            {/* Mission Tracker HUD (Kiri Atas) */}
+            {/* Floating Wayfinder & Progress Card (Tengah Atas) */}
             {viewMode === '3d' && (
-                <div className="absolute top-16 left-3 max-w-xs p-3.5 rounded-2xl bg-slate-900/85 border border-slate-800 text-xs space-y-2 pointer-events-auto backdrop-blur z-10">
-                    <div className="flex items-center gap-2 text-cyan-300 font-extrabold">
-                        <Compass className="w-4 h-4" />
-                        <span>Target Zona Belajar & Latihan</span>
+                <div className="absolute top-16 left-3 right-3 sm:left-1/2 sm:-translate-x-1/2 sm:w-[580px] pointer-events-auto z-20 space-y-2">
+                    <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-700/80 shadow-2xl backdrop-blur-md space-y-2.5">
+                        <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                                <BookOpen className="w-4 h-4 text-cyan-400" />
+                                <span className="text-xs font-extrabold text-white">
+                                    Progres Materi BAB {chapter.number}: {completedMaterials} / {totalMaterials} Selesai ({materialPercent}%)
+                                </span>
+                            </div>
+                            <Badge variant={materialPercent >= 100 ? (practicePassed ? 'success' : 'info') : 'warning'}>
+                                {materialPercent >= 100
+                                    ? practicePassed
+                                        ? '🏆 Ujian Resmi Terbuka'
+                                        : '🎯 Latihan Soal Terbuka'
+                                    : `Kurang ${totalMaterials - completedMaterials} Materi`}
+                            </Badge>
+                        </div>
+
+                        {/* Animated Progress Bar */}
+                        <div className="w-full h-2 rounded-full bg-slate-950 overflow-hidden border border-slate-800">
+                            <div
+                                className="h-full rounded-full bg-gradient-to-r from-cyan-500 via-sky-400 to-emerald-400 transition-all duration-500"
+                                style={{ width: `${materialPercent}%` }}
+                            />
+                        </div>
+
+                        {/* Petunjuk Arah Real-time (Wayfinder Navigasi) */}
+                        <div className="pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+                            <div className="flex items-center gap-2 text-slate-300">
+                                <Navigation className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                <span className="font-medium">
+                                    {currentObjective?.hint}
+                                </span>
+                            </div>
+
+                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-950 border border-cyan-500/40 text-[11px] font-extrabold text-cyan-300">
+                                <span>{compassDir}</span>
+                                <span className="text-white">{currentObjective?.shortTitle}</span>
+                                <span className="text-amber-400">({targetDist}m)</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Mission Tracker HUD (Kiri Samping) */}
+            {viewMode === '3d' && (
+                <div className="absolute top-48 left-3 max-w-[270px] p-3.5 rounded-2xl bg-slate-900/85 border border-slate-800 text-xs space-y-2 pointer-events-auto backdrop-blur z-10 shadow-lg hidden md:block">
+                    <div className="flex items-center justify-between text-cyan-300 font-extrabold">
+                        <div className="flex items-center gap-1.5">
+                            <Compass className="w-4 h-4" />
+                            <span>Target Materi ({completedMaterials}/{totalMaterials})</span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 font-bold">{materialPercent}%</span>
                     </div>
                     <div className="space-y-1">
                         {chapter.materials.map((m) => (
@@ -658,20 +789,23 @@ export default function GameRoot() {
                                 key={m.id}
                                 type="button"
                                 onClick={() => setActiveMaterial(m)}
-                                className="w-full text-left flex items-center gap-2 py-1 px-2 rounded-lg hover:bg-slate-800/80 transition cursor-pointer"
+                                className={`w-full text-left flex items-center gap-2 py-1.5 px-2 rounded-xl transition cursor-pointer ${
+                                    m.is_completed ? 'bg-slate-950/40 hover:bg-slate-800/50' : 'bg-slate-800/80 hover:bg-slate-700/80'
+                                }`}
                             >
                                 <span
                                     className={`w-2 h-2 rounded-full shrink-0 ${
-                                        m.is_completed ? 'bg-emerald-400' : 'bg-amber-400'
+                                        m.is_completed ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'
                                     }`}
                                 />
                                 <span
-                                    className={`text-[11px] truncate ${
-                                        m.is_completed ? 'text-slate-400 line-through' : 'text-slate-200'
+                                    className={`text-[11px] truncate flex-1 ${
+                                        m.is_completed ? 'text-slate-400 line-through' : 'text-slate-200 font-medium'
                                     }`}
                                 >
                                     {m.title}
                                 </span>
+                                {m.is_completed && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
                             </button>
                         ))}
                     </div>
@@ -690,15 +824,15 @@ export default function GameRoot() {
                             type="button"
                             disabled={!nearbyTarget}
                             onClick={() => handleTriggerTarget(nearbyTarget)}
-                            className={`min-w-[148px] min-h-[52px] px-5 py-3 rounded-2xl font-extrabold text-xs sm:text-sm flex items-center justify-center gap-2 transition shadow-xl cursor-pointer ${
+                            className={`min-w-[160px] min-h-[52px] px-5 py-3 rounded-2xl font-extrabold text-xs sm:text-sm flex items-center justify-center gap-2 transition shadow-xl cursor-pointer ${
                                 nearbyTarget
-                                    ? 'bg-gradient-to-r from-amber-400 to-orange-500 text-slate-950 animate-bounce'
+                                    ? 'bg-gradient-to-r from-amber-400 to-orange-500 text-slate-950 animate-bounce ring-4 ring-amber-400/30'
                                     : 'bg-slate-900/75 border border-slate-700 text-slate-500'
                             }`}
                         >
                             <Hand className="w-5 h-5" />
                             <span>
-                                {nearbyTarget ? `Interaksi: ${nearbyTarget.title.slice(0, 18)} [E]` : 'Dekati NPC / Objek'}
+                                {nearbyTarget ? `Interaksi: ${nearbyTarget.title.slice(0, 20)} [E]` : 'Dekati NPC / Objek / Portal'}
                             </span>
                         </button>
                     </div>
