@@ -4,6 +4,7 @@ import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { useGameStore } from '../stores/gameStore';
 
+import RobloxCharacter from './characters/RobloxCharacter';
 import CilegonMap from './world/maps/CilegonMap';
 import SerangMap from './world/maps/SerangMap';
 import TangselMap from './world/maps/TangselMap';
@@ -265,6 +266,7 @@ export default function ZoneScene({
     const camPos = useMemo(() => new THREE.Vector3(), []);
 
     const [playerPos, setPlayerPos] = useState({ x: 0, z: 12 });
+    const [isPlayerMoving, setIsPlayerMoving] = useState(false);
 
     const theme = zone?.config?.theme || {
         sky: '#bae6fd',
@@ -364,7 +366,12 @@ export default function ZoneScene({
             26
         );
 
-        if (len > 0.05) {
+        const moving = len > 0.05;
+        if (moving !== isPlayerMoving) {
+            setIsPlayerMoving(moving);
+        }
+
+        if (moving) {
             const targetAngle = Math.atan2(moveX, moveZ);
             playerRef.current.rotation.y = THREE.MathUtils.lerp(
                 playerRef.current.rotation.y,
@@ -394,8 +401,8 @@ export default function ZoneScene({
         }
         onNearbyTargetChange(closest);
 
-        targetVec.set(currX, playerRef.current.position.y + 1.4, currZ);
-        camPos.set(currX, playerRef.current.position.y + 7.5, currZ + 12.0);
+        targetVec.set(currX, playerRef.current.position.y + 1.6, currZ);
+        camPos.set(currX, playerRef.current.position.y + 5.5, currZ + 9.0);
         state.camera.position.lerp(camPos, 0.12);
         state.camera.lookAt(targetVec);
     });
@@ -441,78 +448,92 @@ export default function ZoneScene({
 
                 const dist = Math.hypot(playerPos.x - t.position[0], playerPos.z - t.position[2]);
                 const isTargetObjective = currentObjective?.id === t.id || currentObjective?.targetPos?.[0] === t.position[0];
-                // Sembunyikan label jika terlalu jauh (>24m) kecuali bila objek tersebut tujuan aktif
-                const showLabel = dist <= 22 || isTargetObjective;
 
+                if (t.kind === 'npc') {
+                    const roleLower = (t.payload?.role_label || '').toLowerCase();
+                    const nameLower = (t.payload?.name || '').toLowerCase();
+
+                    let batikPreset = 'siswa';
+                    if (roleLower.includes('guru') || roleLower.includes('hrd') || roleLower.includes('konsultan') || roleLower.includes('tata usaha')) {
+                        batikPreset = 'guru';
+                    } else if (roleLower.includes('adat') || roleLower.includes('budaya') || roleLower.includes('kritikus') || nameLower.includes('raden')) {
+                        batikPreset = 'budayawan';
+                    } else if (roleLower.includes('duta') || roleLower.includes('penulis') || nameLower.includes('nara') || nameLower.includes('wulan')) {
+                        batikPreset = 'duta';
+                    }
+
+                    let hairStyle = 'short';
+                    if (nameLower.includes('ayah') || nameLower.includes('jaro') || nameLower.includes('usep')) {
+                        hairStyle = 'iket';
+                    } else if (nameLower.includes('ustadz') || nameLower.includes('hafidz') || nameLower.includes('pak bangkit')) {
+                        hairStyle = 'peci';
+                    }
+
+                    return (
+                        <RobloxCharacter
+                            key={t.id}
+                            position={t.position}
+                            rotation={[0, Math.PI, 0]}
+                            name={t.title}
+                            roleLabel={t.subtitle}
+                            isPlayer={false}
+                            isMoving={false}
+                            batikPreset={batikPreset}
+                            hairStyle={hairStyle}
+                            distance={dist}
+                            isTarget={isTargetObjective}
+                        />
+                    );
+                }
+
+                // Interactable: Papan Materi
                 return (
                     <group key={t.id} position={t.position}>
-                        {t.kind === 'npc' ? (
-                            <>
-                                <mesh position={[0, 0.9, 0]} castShadow>
-                                    <capsuleGeometry args={[0.42, 0.85, 8, 16]} />
-                                    <meshStandardMaterial color={t.color} roughness={0.4} />
-                                </mesh>
-                                <mesh position={[0, 1.85, 0]}>
-                                    <sphereGeometry args={[0.36, 16, 16]} />
-                                    <meshStandardMaterial color="#fde68a" />
-                                </mesh>
-                                <mesh position={[0, 2.55, 0]}>
-                                    <octahedronGeometry args={[0.2, 0]} />
-                                    <meshStandardMaterial color="#22d3ee" emissive="#06b6d4" emissiveIntensity={0.7} />
-                                </mesh>
-                            </>
-                        ) : (
-                            <group>
-                                {/* Dudukan kaki papan materi kayu */}
-                                <Cyl p={[-0.8, 0.7, 0]} a={[0.07, 0.08, 1.4, 8]} c="#78350f" />
-                                <Cyl p={[0.8, 0.7, 0]} a={[0.07, 0.08, 1.4, 8]} c="#78350f" />
-                                {/* Papan materi interaktif */}
-                                <mesh position={[0, 1.7, 0]} castShadow>
-                                    <boxGeometry args={[2.2, 1.5, 0.2]} />
-                                    <meshStandardMaterial color="#0f172a" />
-                                </mesh>
-                                <mesh position={[0, 1.7, 0.12]}>
-                                    <planeGeometry args={[2.0, 1.3]} />
-                                    <meshStandardMaterial color="#38bdf8" emissive="#0284c7" emissiveIntensity={0.4} />
-                                </mesh>
-                            </group>
-                        )}
+                        {/* Dudukan kaki papan materi kayu */}
+                        <Cyl p={[-0.8, 0.7, 0]} a={[0.07, 0.08, 1.4, 8]} c="#78350f" />
+                        <Cyl p={[0.8, 0.7, 0]} a={[0.07, 0.08, 1.4, 8]} c="#78350f" />
+                        {/* Papan materi interaktif */}
+                        <mesh position={[0, 1.7, 0]} castShadow>
+                            <boxGeometry args={[2.2, 1.5, 0.2]} />
+                            <meshStandardMaterial color="#0f172a" />
+                        </mesh>
+                        <mesh position={[0, 1.7, 0.12]}>
+                            <planeGeometry args={[2.0, 1.3]} />
+                            <meshStandardMaterial color="#38bdf8" emissive="#0284c7" emissiveIntensity={0.4} />
+                        </mesh>
 
-                        {showLabel && (
-                            <Html position={[0, 3.1, 0]} center distanceFactor={16}>
-                                <div className={`px-2.5 py-1 rounded-xl text-center whitespace-nowrap shadow-xl pointer-events-none transition-all ${
-                                    isTargetObjective
-                                        ? 'bg-slate-950 border-2 border-cyan-400 ring-2 ring-cyan-400/50'
-                                        : 'bg-slate-950/90 border border-slate-700'
-                                }`}>
-                                    <p className="text-[11px] font-extrabold text-cyan-300 flex items-center justify-center gap-1">
-                                        {isTargetObjective && <span>🎯</span>}
-                                        <span>{t.title}</span>
-                                    </p>
-                                    <p className="text-[9px] text-slate-300">
-                                        {t.subtitle} · <span className="text-amber-300 font-bold">{Math.round(dist)}m</span>
-                                    </p>
-                                </div>
-                            </Html>
-                        )}
+                        {/* Label Papan Materi Gaya Roblox Billboard */}
+                        <Html position={[0, 3.1, 0]} center distanceFactor={16}>
+                            <div className={`px-2.5 py-1 rounded-xl text-center whitespace-nowrap shadow-xl pointer-events-none transition-all ${
+                                isTargetObjective
+                                    ? 'bg-slate-950 border-2 border-cyan-400 ring-2 ring-cyan-400/50'
+                                    : 'bg-slate-950/90 border border-slate-700'
+                            }`}>
+                                <p className="text-[11px] font-extrabold text-cyan-300 flex items-center justify-center gap-1">
+                                    {isTargetObjective && <span>🎯</span>}
+                                    <span>{t.title}</span>
+                                </p>
+                                <p className="text-[9px] text-slate-300">
+                                    Papan Pembelajaran · <span className="text-amber-300 font-bold">{Math.round(dist)}m</span>
+                                </p>
+                            </div>
+                        </Html>
                     </group>
                 );
             })}
 
-            {/* Karakter Siswa (Pemain) */}
+            {/* Karakter Siswa Pemain Gaya Humanoid Roblox Berbaju Batik Banten */}
             <group ref={playerRef} position={[0, 0, 12]}>
-                <mesh position={[0, 0.9, 0]} castShadow>
-                    <capsuleGeometry args={[0.42, 0.85, 8, 16]} />
-                    <meshStandardMaterial color={avatarConfig?.shirtColor || '#06b6d4'} roughness={0.35} />
-                </mesh>
-                <mesh position={[0, 1.85, 0]} castShadow>
-                    <sphereGeometry args={[0.36, 16, 16]} />
-                    <meshStandardMaterial color={avatarConfig?.skinColor || '#fde68a'} roughness={0.4} />
-                </mesh>
-                <mesh position={[0, 1.0, -0.35]}>
-                    <boxGeometry args={[0.5, 0.65, 0.25]} />
-                    <meshStandardMaterial color="#1e293b" />
-                </mesh>
+                <RobloxCharacter
+                    name={avatarConfig?.name || 'Siswa SMAN 1 Ciruas'}
+                    roleLabel="Siswa Kelas XII"
+                    isPlayer={true}
+                    isMoving={isPlayerMoving}
+                    batikPreset="siswa"
+                    hairStyle="short"
+                    pantsColor="#334155"
+                    skinColor={avatarConfig?.skinColor || '#fde68a'}
+                />
             </group>
         </>
     );

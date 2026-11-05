@@ -22,6 +22,24 @@
 
 ## Log sesi
 
+### 2026-11-06 — [Google Antigravity] — Karakter Humanoid Roblox Berbaju Batik Banten & Desain HUD Bersih
+**Selesai:**
+- **Karakter Humanoid 3D Gaya Roblox (Roblox R6 Blocky Style):**
+  - Mengganti seluruh kapsul primitif (pemain dan seluruh NPC) dengan karakter manusia model Roblox blocky: kepala bertekstur wajah anime ramah tersenyum, torso tegap berkerah kemeja, lengan kiri & kanan berayun, kaki kiri & kanan dengan celana abu-abu seragam SMA Kelas XII, serta sepatu sneakers sekolah bertumit putih.
+  - **Kemeja Batik Banten Otentik (CanvasTexture Prosedural):**
+    - Pola ragam hias geometris Kesultanan Banten: motif belah ketupat, bintang segi delapan, dan garis tebal khas artefak Banten Lama.
+    - Palet warna lembut/pastel filosofis Banten: abu-abu lembut (grey filosofis Banten), biru toska Kesultanan, emas tembaga, dan terakota merah bata.
+    - 4 Varian Batik Banten: Siswa (Mandalikan), Guru/HRD (Datulaya), Budayawan/Kritikus (Sabakingking), Duta/Penulis (Kawangsan).
+    - Aksesoris kepala tematik: Iket Kepala Sunda Banten (Lomar) untuk tokoh adat/budaya, Peci Hitam Nasional untuk guru/ustadz, dan rambut low-poly rapi untuk siswa.
+  - **Animasi Langkah Berjalan Prosedural:** Ayunan berlawanan kaki & tangan saat berjalan (`walkCycle`), pernapasan lembut saat *idle*, dan bayangan bulat (*blob shadow*) di bawah kaki.
+  - **Name Tag Billboard Roblox:** Papan nama melayang semi-transparan di atas kepala bergaya Roblox dengan ikon role dan jarak meter.
+- **Pembersihan Pandangan Layar (Roblox Clean HUD):**
+  - Mengubah kartu tengah atas yang sebelumnya menghalangi pandangan kamera menjadi **Roblox Slim Quest Banner** ramping di bagian atas (bebas hambatan).
+  - Kamera diturunkan ke sudut pandang *third-person* Roblox yang dinamis dan sinematik.
+- **Pengujian & Build:**
+  - `npm run build` sukses dalam 6.94s tanpa error.
+  - `php vendor/phpunit/phpunit/phpunit` lulus 100% (13 tests, 99 assertions).
+
 ### 2026-11-06 — [Google Antigravity] — Peningkatan Realistis Peta 3D, Layout Spasial, Progres Materi & Sistem Navigasi Wayfinding
 **Selesai:**
 - **Peta 3D Tematik Penuh (Semua 6 BAB):**

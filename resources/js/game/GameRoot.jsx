@@ -726,48 +726,40 @@ export default function GameRoot() {
                 </div>
             </div>
 
-            {/* Floating Wayfinder & Progress Card (Tengah Atas) */}
+            {/* Roblox Style Slim Quest & Wayfinder Banner (Tengah Atas - Bebas Hambatan) */}
             {viewMode === '3d' && (
-                <div className="absolute top-16 left-3 right-3 sm:left-1/2 sm:-translate-x-1/2 sm:w-[580px] pointer-events-auto z-20 space-y-2">
-                    <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-700/80 shadow-2xl backdrop-blur-md space-y-2.5">
-                        <div className="flex items-center justify-between gap-2">
+                <div className="absolute top-14 left-1/2 -translate-x-1/2 max-w-xl w-[94%] sm:w-auto px-4 py-2 rounded-2xl bg-slate-900/90 border border-slate-700/80 shadow-2xl backdrop-blur-md z-20 pointer-events-auto flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-2.5 text-xs">
+                        <Navigation className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
+                        <div className="flex flex-col">
                             <div className="flex items-center gap-2">
-                                <BookOpen className="w-4 h-4 text-cyan-400" />
-                                <span className="text-xs font-extrabold text-white">
-                                    Progres Materi BAB {chapter.number}: {completedMaterials} / {totalMaterials} Selesai ({materialPercent}%)
+                                <span className="font-extrabold text-white text-xs">
+                                    {currentObjective?.shortTitle}
+                                </span>
+                                <span className="text-[10px] font-bold text-amber-300 px-1.5 py-0.5 rounded-lg bg-amber-500/20 border border-amber-500/40">
+                                    {targetDist}m · {compassDir}
                                 </span>
                             </div>
-                            <Badge variant={materialPercent >= 100 ? (practicePassed ? 'success' : 'info') : 'warning'}>
-                                {materialPercent >= 100
-                                    ? practicePassed
-                                        ? '🏆 Ujian Resmi Terbuka'
-                                        : '🎯 Latihan Soal Terbuka'
-                                    : `Kurang ${totalMaterials - completedMaterials} Materi`}
-                            </Badge>
+                            <span className="text-[10px] text-slate-300 line-clamp-1">
+                                {currentObjective?.hint}
+                            </span>
                         </div>
+                    </div>
 
-                        {/* Animated Progress Bar */}
-                        <div className="w-full h-2 rounded-full bg-slate-950 overflow-hidden border border-slate-800">
+                    <div className="flex items-center gap-2.5 border-l border-slate-800 pl-3 shrink-0">
+                        <div className="text-right">
+                            <p className="text-[10px] font-extrabold text-cyan-300 leading-tight">
+                                {materialPercent}% Materi
+                            </p>
+                            <p className="text-[9px] text-slate-400 font-medium">
+                                {completedMaterials}/{totalMaterials} Selesai
+                            </p>
+                        </div>
+                        <div className="w-12 h-2.5 rounded-full bg-slate-950 overflow-hidden border border-slate-800">
                             <div
-                                className="h-full rounded-full bg-gradient-to-r from-cyan-500 via-sky-400 to-emerald-400 transition-all duration-500"
+                                className="h-full rounded-full bg-gradient-to-r from-cyan-400 via-sky-400 to-emerald-400 transition-all duration-300"
                                 style={{ width: `${materialPercent}%` }}
                             />
-                        </div>
-
-                        {/* Petunjuk Arah Real-time (Wayfinder Navigasi) */}
-                        <div className="pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs">
-                            <div className="flex items-center gap-2 text-slate-300">
-                                <Navigation className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                                <span className="font-medium">
-                                    {currentObjective?.hint}
-                                </span>
-                            </div>
-
-                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-950 border border-cyan-500/40 text-[11px] font-extrabold text-cyan-300">
-                                <span>{compassDir}</span>
-                                <span className="text-white">{currentObjective?.shortTitle}</span>
-                                <span className="text-amber-400">({targetDist}m)</span>
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -775,7 +767,7 @@ export default function GameRoot() {
 
             {/* Mission Tracker HUD (Kiri Samping) */}
             {viewMode === '3d' && (
-                <div className="absolute top-48 left-3 max-w-[270px] p-3.5 rounded-2xl bg-slate-900/85 border border-slate-800 text-xs space-y-2 pointer-events-auto backdrop-blur z-10 shadow-lg hidden md:block">
+                <div className="absolute top-28 left-3 max-w-[260px] p-3 rounded-2xl bg-slate-900/85 border border-slate-800 text-xs space-y-2 pointer-events-auto backdrop-blur z-10 shadow-lg hidden md:block">
                     <div className="flex items-center justify-between text-cyan-300 font-extrabold">
                         <div className="flex items-center gap-1.5">
                             <Compass className="w-4 h-4" />
