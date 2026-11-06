@@ -28,6 +28,7 @@ import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import Toast from '../components/ui/Toast';
 import ProgressBar from '../components/ui/ProgressBar';
+import StudentsHub from '../features/teacher/StudentsHub';
 
 const MAP_PRESETS = [
     { value: 'cilegon', label: 'Kota Cilegon (Alun-Alun & Kawasan Industri Krakatau)' },
@@ -325,6 +326,31 @@ export default function TeacherDashboardPage() {
     const [aiCount, setAiCount] = useState(3);
     const [aiDifficulty, setAiDifficulty] = useState('medium');
 
+    const { data: aiStatus } = useQuery({
+        queryKey: ['teacher-ai-status'],
+        queryFn: async () => (await api.get('/teacher/ai/status')).data.data,
+        enabled: activeTab === 'ai',
+        staleTime: 60_000,
+    });
+    const [approvingAll, setApprovingAll] = useState(null);
+    const approveAllDrafts = async (gen) => {
+        const drafts = (gen.items || []).filter((i) => i.status === 'draft');
+        if (drafts.length === 0) return;
+        setApprovingAll(gen.id);
+        try {
+            for (const it of drafts) {
+                await api.post(`/teacher/ai/items/${it.id}/approve`);
+            }
+            notify(`${drafts.length} soal AI disetujui dan masuk ke Bank Soal.`);
+        } catch (err) {
+            notify(err?.response?.data?.message || 'Sebagian soal gagal disetujui.', 'error');
+        } finally {
+            setApprovingAll(null);
+            queryClient.invalidateQueries({ queryKey: ['teacher-ai-generations'] });
+            queryClient.invalidateQueries({ queryKey: ['teacher-questions'] });
+        }
+    };
+
     const { data: aiGenerations = [] } = useQuery({
         queryKey: ['teacher-ai-generations'],
         queryFn: async () => (await api.get('/teacher/ai/generations')).data.data,
@@ -338,7 +364,10 @@ export default function TeacherDashboardPage() {
             queryClient.invalidateQueries({ queryKey: ['teacher-ai-generations'] });
             notify(res.message);
         },
-        onError: (err) => notify(err?.response?.data?.message || 'Gagal membuat soal AI.', 'error'),
+        onError: (err) => {
+            queryClient.invalidateQueries({ queryKey: ['teacher-ai-generations'] });
+            notify(err?.response?.data?.errors?.gemini?.[0] || err?.response?.data?.message || 'Gagal membuat soal AI.', 'error');
+        },
     });
 
     const approveAiItemMutation = useMutation({
@@ -363,10 +392,7 @@ export default function TeacherDashboardPage() {
     // =========================================================
     // 6. SISWA, KELAS & LAPORAN LENGKAP
     // =========================================================
-    const [studentModal, setStudentModal] = useState(null);
-    const [importText, setImportText] = useState('');
-    const [newClassName, setNewClassName] = useState('');
-    const [reportClassFilter, setReportClassFilter] = useState('');
+    const [reportClassFilter] = useState('');
 
     const { data: studentData } = useQuery({
         queryKey: ['teacher-students'],
@@ -385,51 +411,6 @@ export default function TeacherDashboardPage() {
         enabled: activeTab === 'students' || activeTab === 'overview',
     });
 
-    const saveStudentMutation = useMutation({
-        mutationFn: async (payload) => {
-            if (payload.id) {
-                return (await api.put(`/teacher/students/${payload.id}`, payload)).data;
-            }
-            return (await api.post('/teacher/students', payload)).data;
-        },
-        onSuccess: (res) => {
-            queryClient.invalidateQueries({ queryKey: ['teacher-students'] });
-            queryClient.invalidateQueries({ queryKey: ['teacher-reports'] });
-            setStudentModal(null);
-            notify(res.message);
-        },
-        onError: (err) => notify(err?.response?.data?.message || 'Gagal menyimpan siswa.', 'error'),
-    });
-
-    const deleteStudentMutation = useMutation({
-        mutationFn: async (id) => (await api.delete(`/teacher/students/${id}`)).data,
-        onSuccess: (res) => {
-            queryClient.invalidateQueries({ queryKey: ['teacher-students'] });
-            queryClient.invalidateQueries({ queryKey: ['teacher-reports'] });
-            notify(res.message);
-        },
-    });
-
-    const importStudentsMutation = useMutation({
-        mutationFn: async (rows) => (await api.post('/teacher/students/import', { rows })).data,
-        onSuccess: (res) => {
-            queryClient.invalidateQueries({ queryKey: ['teacher-students'] });
-            queryClient.invalidateQueries({ queryKey: ['teacher-reports'] });
-            setImportText('');
-            notify(res.message);
-        },
-        onError: (err) => notify(err?.response?.data?.message || 'Gagal mengimpor siswa.', 'error'),
-    });
-
-    const addClassMutation = useMutation({
-        mutationFn: async (name) => (await api.post('/teacher/classes', { name })).data,
-        onSuccess: (res) => {
-            queryClient.invalidateQueries({ queryKey: ['teacher-students'] });
-            setNewClassName('');
-            notify(res.message);
-        },
-    });
-
     return (
         <AppShell
             title="Dashboard Guru Bahasa Indonesia"
@@ -438,7 +419,7 @@ export default function TeacherDashboardPage() {
             <Toast message={toast?.message} type={toast?.type} onClose={() => setToast(null)} />
 
             {/* Sub-Navigasi Cepat Antar Modul Guru */}
-            <div className="flex flex-wrap gap-2 pb-2 border-b border-slate-800">
+            <div className="flex gap-2 pb-2 overflow-x-auto [scrollbar-width:thin]">
                 {[
                     { to: '/teacher', key: 'overview', label: 'Ringkasan', icon: BookOpen },
                     { to: '/teacher/chapters', key: 'chapters', label: 'BAB & Materi (BAB 5 Dinamis)', icon: BookOpen },
@@ -446,7 +427,7 @@ export default function TeacherDashboardPage() {
                     { to: '/teacher/questions', key: 'questions', label: 'Bank Soal & Latihan', icon: HelpCircle },
                     { to: '/teacher/exams', key: 'exams', label: 'Ujian & Remedial', icon: FileSpreadsheet },
                     { to: '/teacher/ai-generator', key: 'ai', label: 'AI Question Generator', icon: Sparkles },
-                    { to: '/teacher/students', key: 'students', label: 'Siswa & Laporan Nilai', icon: Users },
+                    { to: '/teacher/students', key: 'students', label: 'Siswa, Progres & Rekap', icon: Users },
                 ].map((tab) => {
                     const Icon = tab.icon;
                     const active = activeTab === tab.key;
@@ -454,10 +435,10 @@ export default function TeacherDashboardPage() {
                         <Link
                             key={tab.key}
                             to={tab.to}
-                            className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 border transition ${
+                            className={`shrink-0 px-3.5 py-2 rounded-xl text-xs font-extrabold flex items-center gap-2 border-2 transition whitespace-nowrap ${
                                 active
-                                    ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300'
-                                    : 'bg-slate-900/70 border-slate-800 text-slate-400 hover:text-white'
+                                    ? 'bg-banten-gold border-banten-night text-banten-night shadow-[0_3px_0_0_rgba(0,0,0,0.45)]'
+                                    : 'bg-slate-900/80 border-white/10 text-slate-300 hover:text-white hover:border-white/30'
                             }`}
                         >
                             <Icon className="w-3.5 h-3.5" />
@@ -1298,6 +1279,11 @@ export default function TeacherDashboardPage() {
                                             </div>
                                         </div>
 
+                                        {q.stimulus && (
+                                            <p className="text-xs text-slate-300 italic bg-slate-900 border-l-4 border-banten-gold rounded-r-lg px-3 py-2 whitespace-pre-line">
+                                                {q.stimulus}
+                                            </p>
+                                        )}
                                         <p className="text-sm font-semibold text-white">{q.stem}</p>
                                         <div className="grid sm:grid-cols-2 gap-1.5 text-xs">
                                             {(q.options || []).map((o) => (
@@ -1423,6 +1409,18 @@ export default function TeacherDashboardPage() {
                         title="AI Question Generator — Google Gemini API"
                         subtitle="Buat draf soal pilihan ganda A–E beserta kunci dan pembahasan otomatis berdasarkan BAB dan materi. Kunci API tersimpan aman di .env server."
                     >
+                        <div className="mb-4 flex flex-wrap items-center gap-2">
+                            {aiStatus?.enabled ? (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-lime-400/15 border-2 border-lime-400/50 text-lime-300 text-xs font-extrabold">
+                                    <span className="w-2 h-2 rounded-full bg-lime-400 animate-pulse" /> Gemini aktif · {aiStatus.model}
+                                </span>
+                            ) : (
+                                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-amber-400/15 border-2 border-amber-400/50 text-amber-200 text-xs font-extrabold">
+                                    Mode draf lokal (GEMINI_API_KEY belum diisi)
+                                </span>
+                            )}
+                            <span className="text-[11px] text-slate-400">Soal hasil AI selalu masuk sebagai draf dan baru masuk Bank Soal setelah Anda setujui.</span>
+                        </div>
                         <form
                             onSubmit={(e) => {
                                 e.preventDefault();
@@ -1433,7 +1431,7 @@ export default function TeacherDashboardPage() {
                                     difficulty: aiDifficulty,
                                 });
                             }}
-                            className="grid sm:grid-cols-4 gap-3 items-end"
+                            className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end"
                         >
                             <div>
                                 <label className="block text-xs text-slate-400 mb-1">
@@ -1450,6 +1448,24 @@ export default function TeacherDashboardPage() {
                                     {chapters.map((c) => (
                                         <option key={c.id} value={c.id}>
                                             BAB {c.number}: {c.title}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1">
+                                    Materi (opsional)
+                                </label>
+                                <select
+                                    value={aiMaterialId}
+                                    onChange={(e) => setAiMaterialId(e.target.value)}
+                                    className="w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white"
+                                >
+                                    <option value="">Semua materi BAB ini</option>
+                                    {(chapters.find((c) => String(c.id) === String(aiChapterId || chapters[0]?.id))?.materials || []).map((m) => (
+                                        <option key={m.id} value={m.id}>
+                                            {m.title}
                                         </option>
                                     ))}
                                 </select>
@@ -1479,7 +1495,7 @@ export default function TeacherDashboardPage() {
                                     onChange={(e) => setAiCount(e.target.value)}
                                     className="w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white"
                                 >
-                                    {[2, 3, 5, 10].map((n) => (
+                                    {[2, 3, 5, 10, 15, 20].map((n) => (
                                         <option key={n} value={n}>
                                             {n} Butir Soal (A–E)
                                         </option>
@@ -1491,11 +1507,17 @@ export default function TeacherDashboardPage() {
                                 <Sparkles className="w-4 h-4" />
                                 <span>
                                     {generateAiMutation.isPending
-                                        ? 'Menghasilkan Soal...'
+                                        ? 'Gemini sedang menyusun...'
                                         : 'Generate Soal dengan AI'}
                                 </span>
                             </Button>
                         </form>
+                        {generateAiMutation.isPending && (
+                            <div className="mt-4 flex items-center gap-3 p-3 rounded-2xl bg-cyan-500/10 border-2 border-cyan-500/40 text-xs text-cyan-200 font-bold">
+                                <span className="w-5 h-5 shrink-0 rounded-full border-4 border-cyan-300 border-t-transparent animate-spin" />
+                                Gemini sedang menulis soal, kunci, dan pembahasan. Biasanya 10–60 detik tergantung jumlah soal — jangan tutup halaman ini.
+                            </div>
+                        )}
                     </Card>
 
                     <Card
@@ -1513,12 +1535,25 @@ export default function TeacherDashboardPage() {
                                         key={gen.id}
                                         className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3"
                                     >
-                                        <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
                                             <span className="text-xs font-bold text-cyan-300">
                                                 BAB {gen.chapter?.number}: {gen.chapter?.title} · Model: {gen.model}
                                             </span>
-                                            <Badge variant="info">{gen.difficulty}</Badge>
+                                            <div className="flex items-center gap-2">
+                                                <Badge variant="info">{gen.difficulty}</Badge>
+                                                {(gen.items || []).some((i) => i.status === 'draft') && (
+                                                    <Button size="sm" onClick={() => approveAllDrafts(gen)} disabled={approvingAll === gen.id}>
+                                                        <CheckCircle2 className="w-3.5 h-3.5" />
+                                                        <span>{approvingAll === gen.id ? 'Menyetujui...' : 'Setujui Semua'}</span>
+                                                    </Button>
+                                                )}
+                                            </div>
                                         </div>
+                                        {gen.status === 'failed' && (
+                                            <p className="text-xs font-bold text-rose-300 bg-rose-500/10 border-2 border-rose-400/40 rounded-xl px-3 py-2">
+                                                Gagal: {gen.error || 'Proses pembuatan soal AI gagal.'}
+                                            </p>
+                                        )}
 
                                         <div className="space-y-3">
                                             {(gen.items || []).map((item) => {
@@ -1571,6 +1606,11 @@ export default function TeacherDashboardPage() {
                                                                 </div>
                                                             )}
                                                         </div>
+                                                        {p.stimulus && (
+                                                            <p className="text-xs text-slate-300 italic bg-slate-950/70 border-l-4 border-banten-gold rounded-r-lg px-3 py-2 whitespace-pre-line">
+                                                                {p.stimulus}
+                                                            </p>
+                                                        )}
                                                         <p className="text-xs sm:text-sm font-bold text-white">
                                                             {p.stem}
                                                         </p>
@@ -1611,220 +1651,7 @@ export default function TeacherDashboardPage() {
             {/* =====================================================
                 TAB 7: MANAJEMEN SISWA, KELAS & LAPORAN 7 BAGIAN + EKSPOR
                ===================================================== */}
-            {activeTab === 'students' && (
-                <div className="space-y-6">
-                    {/* Ekspor & Filter Laporan */}
-                    <Card
-                        title="Laporan Hasil Pembelajaran & Rekap Nilai (KKM 75)"
-                        subtitle="Unduh laporan resmi dalam format Excel (CSV UTF-8) atau cetak laporan resmi PDF SMAN 1 Ciruas"
-                        actions={
-                            <div className="flex flex-wrap items-center gap-2">
-                                <select
-                                    value={reportClassFilter}
-                                    onChange={(e) => setReportClassFilter(e.target.value)}
-                                    className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white"
-                                >
-                                    <option value="">Semua Kelas XII</option>
-                                    {(studentData?.classes || []).map((cls) => (
-                                        <option key={cls.id} value={cls.id}>
-                                            Kelas {cls.name}
-                                        </option>
-                                    ))}
-                                </select>
-                                <a
-                                    href={`/api/v1/teacher/reports/export/excel${
-                                        reportClassFilter ? `?class_id=${reportClassFilter}` : ''
-                                    }`}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="px-3.5 py-2 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center gap-1.5"
-                                >
-                                    <Download className="w-3.5 h-3.5" />
-                                    <span>Unduh Excel (CSV)</span>
-                                </a>
-                                <a
-                                    href={`/api/v1/teacher/reports/export/pdf${
-                                        reportClassFilter ? `?class_id=${reportClassFilter}` : ''
-                                    }`}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="px-3.5 py-2 rounded-xl bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 text-xs font-bold flex items-center gap-1.5"
-                                >
-                                    <Printer className="w-3.5 h-3.5" />
-                                    <span>Cetak / PDF Resmi</span>
-                                </a>
-                            </div>
-                        }
-                    >
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-left border-collapse text-xs">
-                                <thead>
-                                    <tr className="border-b border-slate-800 text-slate-400">
-                                        <th className="py-2.5 px-3">NISN</th>
-                                        <th className="py-2.5 px-3">Nama Siswa</th>
-                                        <th className="py-2.5 px-3">Kelas</th>
-                                        <th className="py-2.5 px-3">Rata-Rata Latihan</th>
-                                        <th className="py-2.5 px-3">Nilai Ujian (Tertinggi)</th>
-                                        <th className="py-2.5 px-3">Progres</th>
-                                        <th className="py-2.5 px-3">Ketuntasan KKM 75</th>
-                                        <th className="py-2.5 px-3 text-right">Aksi</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-800/70">
-                                    {(reportData?.students || []).map((st) => (
-                                        <tr key={st.id} className="hover:bg-slate-900/50">
-                                            <td className="py-2.5 px-3 font-mono text-cyan-300">
-                                                {st.nisn}
-                                            </td>
-                                            <td className="py-2.5 px-3 font-bold text-white">
-                                                {st.name}
-                                            </td>
-                                            <td className="py-2.5 px-3">{st.class_name}</td>
-                                            <td className="py-2.5 px-3">
-                                                {st.avg_practice_score ?? '-'}
-                                            </td>
-                                            <td className="py-2.5 px-3 font-bold text-white">
-                                                {st.avg_exam_score ?? '-'}
-                                            </td>
-                                            <td className="py-2.5 px-3">{st.progress_percent}%</td>
-                                            <td className="py-2.5 px-3">
-                                                <Badge variant={st.passed_kkm ? 'success' : 'warning'}>
-                                                    {st.passed_kkm ? 'TUNTAS' : 'BELUM TUNTAS'}
-                                                </Badge>
-                                            </td>
-                                            <td className="py-2.5 px-3 text-right">
-                                                <div className="inline-flex items-center gap-1.5">
-                                                    <Button
-                                                        size="sm"
-                                                        variant="secondary"
-                                                        onClick={() =>
-                                                            setStudentModal({
-                                                                id: st.id,
-                                                                name: st.name,
-                                                                nisn: st.nisn,
-                                                                school_class_id:
-                                                                    studentData?.classes?.find(
-                                                                        (c) => c.name === st.class_name
-                                                                    )?.id ||
-                                                                    studentData?.classes?.[0]?.id,
-                                                                reset_password_to_nisn: false,
-                                                            })
-                                                        }
-                                                    >
-                                                        <Edit3 className="w-3 h-3" />
-                                                    </Button>
-                                                    <Button
-                                                        size="sm"
-                                                        variant="danger"
-                                                        onClick={() =>
-                                                            deleteStudentMutation.mutate(st.id)
-                                                        }
-                                                    >
-                                                        <Trash2 className="w-3 h-3" />
-                                                    </Button>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    </Card>
-
-                    {/* Tambah Siswa, Import Massal & Kelola Kelas */}
-                    <div className="grid lg:grid-cols-2 gap-6">
-                        <Card
-                            title="Tambah & Impor Data Siswa"
-                            subtitle="Password awal otomatis menggunakan NISN masing-masing siswa"
-                            actions={
-                                <Button
-                                    size="sm"
-                                    onClick={() =>
-                                        setStudentModal({
-                                            name: '',
-                                            nisn: '',
-                                            school_class_id: studentData?.classes?.[0]?.id || 1,
-                                        })
-                                    }
-                                >
-                                    <Plus className="w-4 h-4" />
-                                    <span>Tambah 1 Siswa</span>
-                                </Button>
-                            }
-                        >
-                            <div className="space-y-3">
-                                <p className="text-xs text-slate-400">
-                                    Format Impor Cepat (satu baris per siswa: <code className="text-cyan-300">NISN, Nama Lengkap, Kelas</code>):
-                                </p>
-                                <textarea
-                                    rows={4}
-                                    placeholder={'0081234511, Raka Pratama, XII-1\n0081234512, Dinda Permata, XII-2'}
-                                    value={importText}
-                                    onChange={(e) => setImportText(e.target.value)}
-                                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-white"
-                                />
-                                <Button
-                                    size="sm"
-                                    disabled={!importText.trim() || importStudentsMutation.isPending}
-                                    onClick={() => {
-                                        const rows = importText
-                                            .split('\n')
-                                            .map((line) => line.trim())
-                                            .filter(Boolean)
-                                            .map((line) => {
-                                                const parts = line.split(',').map((p) => p.trim());
-                                                return {
-                                                    nisn: parts[0] || '',
-                                                    name: parts[1] || parts[0] || '',
-                                                    class_name: parts[2] || 'XII-1',
-                                                };
-                                            });
-                                        importStudentsMutation.mutate(rows);
-                                    }}
-                                >
-                                    <Upload className="w-3.5 h-3.5" />
-                                    <span>Impor Daftar Siswa Sekarang</span>
-                                </Button>
-                            </div>
-                        </Card>
-
-                        <Card title="Daftar Kelas XII yang Diampu" subtitle="Kelola rombongan belajar">
-                            <div className="space-y-2.5">
-                                {(studentData?.classes || []).map((cls) => (
-                                    <div
-                                        key={cls.id}
-                                        className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between text-xs"
-                                    >
-                                        <span className="font-bold text-white">
-                                            Kelas {cls.name} ({cls.academic_year})
-                                        </span>
-                                        <Badge variant="info">{cls.students_count} Siswa</Badge>
-                                    </div>
-                                ))}
-                                <form
-                                    onSubmit={(e) => {
-                                        e.preventDefault();
-                                        if (newClassName.trim()) {
-                                            addClassMutation.mutate(newClassName.trim());
-                                        }
-                                    }}
-                                    className="flex gap-2 pt-2"
-                                >
-                                    <input
-                                        placeholder="Nama Kelas Baru (mis. XII-4)"
-                                        value={newClassName}
-                                        onChange={(e) => setNewClassName(e.target.value)}
-                                        className="flex-1 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
-                                    />
-                                    <Button type="submit" size="sm">
-                                        + Tambah Kelas
-                                    </Button>
-                                </form>
-                            </div>
-                        </Card>
-                    </div>
-                </div>
-            )}
+            {activeTab === 'students' && <StudentsHub notify={notify} />}
 
             {/* =====================================================
                 MODAL EDIT / TAMBAH BAB (TERMASUK BAB 5)
@@ -2037,6 +1864,21 @@ export default function TeacherDashboardPage() {
                                     <option value="hard">Sulit</option>
                                 </select>
                             </div>
+                        </div>
+
+                        <div>
+                            <label className="block text-xs text-slate-400 mb-1">
+                                Kutipan / Teks Bacaan (opsional)
+                            </label>
+                            <textarea
+                                rows={4}
+                                value={questionModal.stimulus || ''}
+                                onChange={(e) =>
+                                    setQuestionModal({ ...questionModal, stimulus: e.target.value })
+                                }
+                                placeholder="Isi bila soal berdasarkan teks, kutipan novel, puisi, atau data. Tampil di atas pertanyaan."
+                                className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white italic"
+                            />
                         </div>
 
                         <div>
@@ -2290,93 +2132,6 @@ export default function TeacherDashboardPage() {
                 )}
             </Modal>
 
-            {/* MODAL TAMBAH / EDIT SISWA */}
-            <Modal
-                open={!!studentModal}
-                onClose={() => setStudentModal(null)}
-                title={studentModal?.id ? 'Edit Data Siswa' : 'Tambah Siswa Baru'}
-            >
-                {studentModal && (
-                    <form
-                        onSubmit={(e) => {
-                            e.preventDefault();
-                            saveStudentMutation.mutate(studentModal);
-                        }}
-                        className="space-y-3"
-                    >
-                        <div>
-                            <label className="block text-xs text-slate-400 mb-1">
-                                NISN (Digunakan sebagai Username & Password Awal)
-                            </label>
-                            <input
-                                required
-                                value={studentModal.nisn}
-                                onChange={(e) =>
-                                    setStudentModal({ ...studentModal, nisn: e.target.value })
-                                }
-                                className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-xs text-slate-400 mb-1">
-                                Nama Lengkap Siswa
-                            </label>
-                            <input
-                                required
-                                value={studentModal.name}
-                                onChange={(e) =>
-                                    setStudentModal({ ...studentModal, name: e.target.value })
-                                }
-                                className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-xs text-slate-400 mb-1">Kelas</label>
-                            <select
-                                value={studentModal.school_class_id}
-                                onChange={(e) =>
-                                    setStudentModal({
-                                        ...studentModal,
-                                        school_class_id: Number(e.target.value),
-                                    })
-                                }
-                                className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
-                            >
-                                {(studentData?.classes || []).map((c) => (
-                                    <option key={c.id} value={c.id}>
-                                        Kelas {c.name}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                        {studentModal.id && (
-                            <label className="flex items-center gap-2 text-xs text-slate-300 pt-1">
-                                <input
-                                    type="checkbox"
-                                    checked={!!studentModal.reset_password_to_nisn}
-                                    onChange={(e) =>
-                                        setStudentModal({
-                                            ...studentModal,
-                                            reset_password_to_nisn: e.target.checked,
-                                        })
-                                    }
-                                />
-                                <span>Reset kata sandi siswa kembali ke NISN</span>
-                            </label>
-                        )}
-                        <div className="flex justify-end gap-2 pt-2">
-                            <Button
-                                type="button"
-                                variant="secondary"
-                                onClick={() => setStudentModal(null)}
-                            >
-                                Batal
-                            </Button>
-                            <Button type="submit">Simpan Data Siswa</Button>
-                        </div>
-                    </form>
-                )}
-            </Modal>
         </AppShell>
     );
 }

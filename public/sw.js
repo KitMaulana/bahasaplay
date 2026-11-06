@@ -22,7 +22,7 @@ self.addEventListener('fetch', (event) => {
     const url = new URL(request.url);
 
     // Jangan pernah menyimpan cache endpoint API (terutama sesi ujian & latihan)
-    if (request.method !== 'GET' || url.pathname.startsWith('/api/') || url.pathname.startsWith('/sanctum/')) {
+    if (request.method !== 'GET' || url.pathname.startsWith('/api/') || url.pathname.startsWith('/sanctum/') || url.pathname.startsWith('/audio/')) {
         return;
     }
 

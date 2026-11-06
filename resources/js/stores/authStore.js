@@ -38,11 +38,11 @@ export const useAuthStore = create((set) => ({
         set({ user: null, isAuthenticated: false });
     },
 
-    login: async (identifier, password) => {
+    login: async (identifier, password, role) => {
         set({ isLoading: true });
         try {
             await initCsrf();
-            const response = await api.post('/auth/login', { identifier, password });
+            const response = await api.post('/auth/login', { identifier, password, role });
             const { user, token, redirect_to } = response.data.data;
             localStorage.setItem('bahasa_play_token', token);
             localStorage.setItem('bahasa_play_user', JSON.stringify(user));

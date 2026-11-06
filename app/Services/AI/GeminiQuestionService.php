@@ -45,27 +45,45 @@ class GeminiQuestionService
                 // Jika GEMINI_API_KEY belum diisi di .env, gunakan generator kontekstual lokal bertanda draf
                 $parsedItems = $this->buildContextualDrafts($chapter, $material, $count, $difficulty);
             } else {
-                $endpoint = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$apiKey}";
-                $response = Http::timeout(45)->post($endpoint, [
-                    'contents' => [
-                        [
-                            'parts' => [
-                                ['text' => $prompt],
+                // Pembuatan 10–20 soal bisa butuh >30 detik; longgarkan batas waktu PHP untuk permintaan ini.
+                @set_time_limit(180);
+
+                $endpoint = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent";
+                // Kunci dikirim lewat header (bukan query string) agar tidak ikut tercatat di log/URL error.
+                $response = Http::timeout(150)
+                    ->withHeaders(['x-goog-api-key' => $apiKey])
+                    ->retry(2, 1500, fn ($e) => $e instanceof \Illuminate\Http\Client\ConnectionException
+                        || ($e instanceof \Illuminate\Http\Client\RequestException && in_array($e->response->status(), [429, 500, 503], true)), throw: false)
+                    ->post($endpoint, [
+                        'contents' => [
+                            [
+                                'role' => 'user',
+                                'parts' => [
+                                    ['text' => $prompt],
+                                ],
                             ],
                         ],
-                    ],
-                    'generationConfig' => [
-                        'temperature' => 0.6,
-                        'responseMimeType' => 'application/json',
-                    ],
-                ]);
+                        'generationConfig' => [
+                            'temperature' => 0.7,
+                            'responseMimeType' => 'application/json',
+                            'responseSchema' => $this->responseSchema(),
+                            'maxOutputTokens' => 16384,
+                            'thinkingConfig' => ['thinkingBudget' => 1024],
+                        ],
+                    ]);
 
                 if (! $response->successful()) {
-                    throw new \RuntimeException('Gagal menghubungi Google Gemini API (HTTP '.$response->status().').');
+                    throw new \RuntimeException($this->friendlyHttpError($response->status(), (string) ($response->json('error.message') ?? '')));
                 }
 
                 $body = $response->json();
-                $rawText = $body['candidates'][0]['content']['parts'][0]['text'] ?? '';
+                $parts = $body['candidates'][0]['content']['parts'] ?? [];
+                // Abaikan bagian "thought" (bila ada) dan gabungkan teks jawaban
+                $rawText = collect($parts)->reject(fn ($p) => ! empty($p['thought']))->pluck('text')->implode('');
+                if ($rawText === '') {
+                    $reason = $body['candidates'][0]['finishReason'] ?? ($body['promptFeedback']['blockReason'] ?? 'tidak diketahui');
+                    throw new \RuntimeException("Gemini tidak mengembalikan soal (alasan: {$reason}). Coba kurangi jumlah soal atau ulangi.");
+                }
                 $tokensUsed = $body['usageMetadata']['totalTokenCount'] ?? null;
 
                 $parsedItems = $this->parseAndValidateJson($rawText, $difficulty, $material?->title ?? $chapter->title);
@@ -152,36 +170,96 @@ class GeminiQuestionService
         });
     }
 
+    /** Status integrasi Gemini untuk ditampilkan di panel guru (tanpa membocorkan kunci). */
+    public function status(): array
+    {
+        return [
+            'enabled' => (string) config('services.gemini.key', '') !== '',
+            'model' => (string) config('services.gemini.model', 'gemini-2.5-flash'),
+        ];
+    }
+
+    protected function friendlyHttpError(int $status, string $detail): string
+    {
+        $msg = match (true) {
+            $status === 400 => 'Permintaan ke Gemini ditolak (HTTP 400). Periksa GEMINI_API_KEY dan GEMINI_MODEL di .env.',
+            in_array($status, [401, 403], true) => 'Kunci Gemini tidak valid atau tidak punya izin (HTTP '.$status.'). Periksa GEMINI_API_KEY di .env.',
+            $status === 404 => 'Model Gemini tidak ditemukan (HTTP 404). Periksa GEMINI_MODEL di .env.',
+            $status === 429 => 'Kuota Gemini sedang habis atau terlalu banyak permintaan (HTTP 429). Tunggu sebentar lalu coba lagi.',
+            $status >= 500 => 'Server Gemini sedang sibuk (HTTP '.$status.'). Coba lagi beberapa saat lagi.',
+            default => 'Gagal menghubungi Google Gemini API (HTTP '.$status.').',
+        };
+
+        return $detail !== '' ? $msg.' Detail: '.mb_substr($detail, 0, 160) : $msg;
+    }
+
+    /** Skema keluaran terstruktur agar Gemini selalu mengembalikan JSON yang sesuai. */
+    protected function responseSchema(): array
+    {
+        $str = ['type' => 'STRING'];
+
+        return [
+            'type' => 'ARRAY',
+            'items' => [
+                'type' => 'OBJECT',
+                'properties' => [
+                    'stem' => $str,
+                    'stimulus' => $str,
+                    'options' => [
+                        'type' => 'OBJECT',
+                        'properties' => ['A' => $str, 'B' => $str, 'C' => $str, 'D' => $str, 'E' => $str],
+                        'required' => ['A', 'B', 'C', 'D', 'E'],
+                    ],
+                    'correct_label' => ['type' => 'STRING', 'enum' => ['A', 'B', 'C', 'D', 'E']],
+                    'explanation' => $str,
+                    'difficulty' => ['type' => 'STRING', 'enum' => ['easy', 'medium', 'hard']],
+                    'category' => $str,
+                ],
+                'required' => ['stem', 'stimulus', 'options', 'correct_label', 'explanation', 'difficulty', 'category'],
+                'propertyOrdering' => ['stimulus', 'stem', 'options', 'correct_label', 'explanation', 'difficulty', 'category'],
+            ],
+        ];
+    }
+
     protected function buildPrompt(Chapter $chapter, ?Material $material, int $count, string $difficulty): string
     {
-        $materialContext = $material
-            ? "Materi spesifik: {$material->title}\nRingkasan isi: ".strip_tags((string) ($material->summary ?: $material->content))
-            : "Seluruh materi pada BAB {$chapter->number}: {$chapter->title}";
+        $clean = fn ($html) => trim(preg_replace('/\s+/u', ' ', html_entity_decode(strip_tags((string) $html))));
+
+        if ($material) {
+            $materialContext = "Materi spesifik: {$material->title}\nIsi materi:\n".mb_substr($clean($material->content ?: $material->summary), 0, 6000);
+        } else {
+            $materials = $chapter->materials()->get(['title', 'summary', 'content']);
+            $materialContext = "Cakupan: seluruh materi BAB {$chapter->number}.\n"
+                .($chapter->description ? 'Deskripsi BAB: '.$clean($chapter->description)."\n" : '')
+                .$materials->map(fn ($m) => '- '.$m->title.': '.mb_substr($clean($m->summary ?: $m->content), 0, 900))->implode("\n");
+        }
+
+        $existing = $chapter->questions()->latest()->limit(25)->pluck('stem')
+            ->map(fn ($q) => '- '.mb_substr($clean($q), 0, 140))->implode("\n");
+        $existingBlock = $existing !== '' ? "\nSoal yang SUDAH ADA di bank soal (jangan membuat soal yang sama/mirip):\n{$existing}\n" : '';
+
+        $level = [
+            'easy' => 'Mudah — mengingat & memahami (C1–C2): definisi, ciri, struktur dasar.',
+            'medium' => 'Sedang — menerapkan & menganalisis (C3–C4): identifikasi unsur dalam kutipan teks, kaidah kebahasaan.',
+            'hard' => 'Sulit/HOTS — menganalisis, mengevaluasi, mencipta (C4–C6): wajib memakai stimulus teks, menilai/memperbaiki kalimat, menarik simpulan.',
+        ][$difficulty] ?? $difficulty;
 
         return <<<PROMPT
-Anda adalah guru senior Bahasa Indonesia SMA Kelas XII (Kurikulum Merdeka).
-Buat tepat {$count} soal pilihan ganda (5 opsi: A, B, C, D, E) dengan tingkat kesulitan "{$difficulty}".
+Anda adalah guru senior Bahasa Indonesia SMA Kelas XII (Kurikulum Merdeka) yang ahli menyusun soal asesmen.
+Buat tepat {$count} soal pilihan ganda (5 opsi: A, B, C, D, E).
+Tingkat kesulitan: "{$difficulty}" → {$level}
 BAB {$chapter->number}: {$chapter->title}
 {$materialContext}
-
-Kembalikan HANYA JSON array dengan skema berikut:
-[
-  {
-    "stem": "Pertanyaan soal dalam Bahasa Indonesia baku",
-    "stimulus": "Kutipan teks bacaan/ilustrasi pendukung soal (opsional, boleh string kosong)",
-    "options": {
-      "A": "Pilihan A",
-      "B": "Pilihan B",
-      "C": "Pilihan C",
-      "D": "Pilihan D",
-      "E": "Pilihan E"
-    },
-    "correct_label": "A",
-    "explanation": "Pembahasan lengkap mengapa jawaban tersebut benar",
-    "difficulty": "{$difficulty}",
-    "category": "Judul materi terkait"
-  }
-]
+{$existingBlock}
+Aturan penulisan soal:
+1. Gunakan Bahasa Indonesia baku sesuai EYD V dan KBBI; konteks dekat dengan kehidupan siswa SMA di Banten bila relevan.
+2. Hanya SATU jawaban yang benar; pengecoh (distraktor) masuk akal, homogen, dan panjangnya setara dengan kunci.
+3. Jangan gunakan opsi "semua benar", "semua salah", atau "A dan B benar".
+4. Sebar kunci jawaban secara acak dan merata di A–E (jangan didominasi satu huruf).
+5. Untuk soal yang membutuhkan teks, tulis kutipan/teks pendek orisinal di "stimulus" (boleh string kosong jika tidak perlu). Jangan mengulang stimulus di "stem".
+6. "explanation" menjelaskan alasan kunci benar DAN mengapa pengecoh utama salah (2–4 kalimat).
+7. "category" diisi judul materi/subtopik yang diukur.
+8. Jangan membuat materi di luar cakupan di atas.
 PROMPT;
     }
 

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\LoginRequest;
 use App\Http\Resources\UserResource;
+use App\Models\ActivityLog;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -30,6 +31,17 @@ class AuthController extends Controller
             ]);
         }
 
+        // Peran akun harus sama dengan tab yang dipilih: akun guru tidak bisa masuk lewat tab Siswa, dan seterusnya.
+        // Dicek sebelum sesi/token dibuat dan sebelum login dicatat.
+        if ($user->primaryRole() !== $request->validated('role')) {
+            $roleLabel = ['student' => 'Siswa', 'teacher' => 'Guru', 'admin' => 'Admin'][$user->primaryRole()];
+
+            return response()->json([
+                'message' => "Akun ini terdaftar sebagai {$roleLabel}. Silakan pilih peran {$roleLabel} untuk masuk.",
+                'errors' => ['identifier' => ["Akun ini terdaftar sebagai {$roleLabel}. Silakan pilih peran {$roleLabel} untuk masuk."]],
+            ], 403);
+        }
+
         if (! $user->is_active) {
             return response()->json([
                 'message' => 'Akun Anda sedang dinonaktifkan. Silakan hubungi guru atau administrator.',
@@ -37,6 +49,7 @@ class AuthController extends Controller
         }
 
         $user->update(['last_login_at' => now()]);
+        ActivityLog::record($user->id, 'auth.login', null, null, [], $request->ip());
 
         Auth::guard('web')->login($user);
         if ($request->hasSession()) {

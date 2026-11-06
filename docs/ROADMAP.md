@@ -100,7 +100,7 @@
 
 ## Fase 13 — PWA, performa, polesan
 - [x] Web App Manifest (`public/manifest.webmanifest`), ikon SVG (`192x192`, `512x512`), service worker (`public/sw.js` yang tidak meng-cache endpoint API ujian/latihan), installable di Android/iOS/Desktop
-- [x] Arsitektur 3D low-poly stylized (Three.js + React Three Fiber) di-lazy-load penuh (`GameRoot` & `Lab3DPage` terpisah dari bundel utama)
+- [x] Arsitektur 3D low-poly stylized (Three.js + React Three Fiber) di-lazy-load penuh (`GameRoot` terpisah dari bundel utama; halaman uji `/lab` dihapus 2026-11-06 atas permintaan pemilik)
 - [x] 6 Achievement resmi & XP, animasi/feedback, aksesibilitas dasar (kontras tinggi, ukuran tombol sentuh ≥ 44px)
 - ✅ Kriteria: PWA installable; bundel dashboard tetap ringan (~127 KB gzip tanpa Three.js); fps ponsel ≥ 30
 

@@ -4,19 +4,18 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Canvas } from '@react-three/fiber';
 import {
     ArrowLeft,
+    ArrowUp,
     BookOpen,
     CheckCircle2,
-    Clock,
     Compass,
+    Move3d,
     Gamepad2,
     Gauge,
     Hand,
     HelpCircle,
     Lock,
     MapPin,
-    Navigation,
     ShieldCheck,
-    Sparkles,
 } from 'lucide-react';
 import api from '../lib/axios';
 import { useAuthStore } from '../stores/authStore';
@@ -25,13 +24,25 @@ import ZoneScene from './ZoneScene';
 import Joystick from './hud/Joystick';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
-import Modal from '../components/ui/Modal';
 import Toast from '../components/ui/Toast';
+import MaterialDialogue from './hud/MaterialDialogue';
+import ElbiraChat, { elbiraGreeting } from './hud/ElbiraChat';
+import CatAvatar from '../components/game/CatAvatar';
+import QuizArena from './hud/QuizArena';
+import { MiniMap, FullMap } from './hud/MiniMap';
+import { playerState } from './lib/playerState';
+import { MusicToggle } from '../components/audio/MusicPlayer';
+import { useMusic } from '../lib/music';
 
 export default function GameRoot() {
     const { chapterId } = useParams();
     const queryClient = useQueryClient();
     const user = useAuthStore((s) => s.user);
+    const setMusicHud = useMusic((s) => s.setHudEmbedded);
+    useEffect(() => {
+        setMusicHud(true);
+        return () => setMusicHud(false);
+    }, [setMusicHud]);
     const fps = useGameStore((s) => s.fps);
     const keysRef = useRef({});
 
@@ -44,6 +55,38 @@ export default function GameRoot() {
     const [remainingSec, setRemainingSec] = useState(0);
     const [toast, setToast] = useState(null);
     const [playerPos, setPlayerPos] = useState({ x: 0, z: 12 });
+    const [fullMapOpen, setFullMapOpen] = useState(false);
+    const [elbiraOpen, setElbiraOpen] = useState(false);
+    const [elbiraMessages, setElbiraMessages] = useState([]);
+    const [showControlsHint, setShowControlsHint] = useState(() => {
+        try {
+            return localStorage.getItem('bp_controls_hint_seen') !== '1';
+        } catch {
+            return true;
+        }
+    });
+    const dismissControlsHint = () => {
+        setShowControlsHint(false);
+        try {
+            localStorage.setItem('bp_controls_hint_seen', '1');
+        } catch {
+            /* abaikan */
+        }
+    };
+
+    const playerName = user?.name || 'Siswa';
+
+    // Elbira: buka chat (riwayat dipertahankan selama berada di dunia BAB ini)
+    const openElbira = () => {
+        keysRef.current = {};
+        setElbiraMessages((prev) => (prev.length ? prev : [elbiraGreeting(playerName, chapter)]));
+        setElbiraOpen(true);
+    };
+    const closeElbira = () => {
+        keysRef.current = {};
+        setElbiraOpen(false);
+    };
+    const playerClass = user?.school_classes?.[0]?.name ? `Kelas ${user.school_classes[0].name}` : 'Kelas XII';
 
     const { data: chapter, isLoading } = useQuery({
         queryKey: ['student-chapter', chapterId],
@@ -198,23 +241,39 @@ export default function GameRoot() {
         };
     }
 
+    // Jarak & arah tujuan relatif terhadap arah pandang kamera (panah berputar, bukan mata angin).
     let targetDist = 0;
-    let compassDir = 'Utara ⬆️';
+    let relArrowDeg = 0;
+    let relWord = 'di depan';
     if (currentObjective && currentObjective.targetPos) {
         const dx = currentObjective.targetPos[0] - playerPos.x;
         const dz = currentObjective.targetPos[2] - playerPos.z;
         targetDist = Math.round(Math.hypot(dx, dz));
-
-        const deg = Math.atan2(dx, -dz) * (180 / Math.PI);
-        if (deg >= -22.5 && deg < 22.5) compassDir = 'Utara ⬆️';
-        else if (deg >= 22.5 && deg < 67.5) compassDir = 'Timur Laut ↗️';
-        else if (deg >= 67.5 && deg < 112.5) compassDir = 'Timur ➡️';
-        else if (deg >= 112.5 && deg < 157.5) compassDir = 'Tenggara ↘️';
-        else if (deg >= 157.5 || deg < -157.5) compassDir = 'Selatan ⬇️';
-        else if (deg >= -157.5 && deg < -112.5) compassDir = 'Barat Daya ↙️';
-        else if (deg >= -112.5 && deg < -67.5) compassDir = 'Barat ⬅️';
-        else if (deg >= -67.5 && deg < -22.5) compassDir = 'Barat Laut ↖️';
+        const worldAng = Math.atan2(dx, -dz); // 0 = utara
+        const camAng = Math.atan2(-Math.sin(playerState.camYaw), -Math.cos(playerState.camYaw));
+        let rel = ((worldAng - camAng) * 180) / Math.PI;
+        rel = ((rel + 540) % 360) - 180;
+        relArrowDeg = rel;
+        const a = Math.abs(rel);
+        if (a < 30) relWord = 'di depan';
+        else if (a > 150) relWord = 'di belakang';
+        else relWord = rel > 0 ? (a < 70 ? 'serong kanan' : 'di kanan') : a < 70 ? 'serong kiri' : 'di kiri';
     }
+
+    /** Cari NPC yang dialognya membuka materi tertentu (agar papan materi juga "dibawakan" NPC). */
+    const npcForMaterial = (materialId) => {
+        const zoneNpcs = (chapter?.zones || []).flatMap((z) => z.npcs || []);
+        return (
+            zoneNpcs.find((n) =>
+                (n.dialogues || []).some((d) => (d.nodes || []).some((nd) => (nd.actions || []).some((ac) => ac.type === 'open_material' && ac.material_id === materialId)))
+            ) || null
+        );
+    };
+    const openMaterial = (mat, npc) => {
+        if (!mat) return;
+        setActiveNpc(npc || npcForMaterial(mat.id));
+        setActiveMaterial(mat);
+    };
 
     const handleTriggerTarget = (target) => {
         if (!target || !chapter) return;
@@ -241,7 +300,7 @@ export default function GameRoot() {
             const mat =
                 chapter.materials.find((m) => m.id === item.material_id) ||
                 chapter.materials[0];
-            if (mat) setActiveMaterial(mat);
+            openMaterial(mat);
             return;
         }
 
@@ -276,10 +335,20 @@ export default function GameRoot() {
 
     useEffect(() => {
         const onKeyDown = (e) => {
+            const tag = e.target?.tagName;
+            if (elbiraOpen || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
             keysRef.current[e.code] = true;
-            if (e.code === 'KeyE' && nearbyTarget && viewMode === '3d') {
+            if (activeMaterial) return;
+            if (e.code === 'KeyC' && viewMode === '3d' && !fullMapOpen) {
+                e.preventDefault();
+                openElbira();
+                return;
+            }
+            if (e.code === 'KeyE' && nearbyTarget && viewMode === '3d' && !fullMapOpen) {
                 handleTriggerTarget(nearbyTarget);
             }
+            if (e.code === 'KeyM' && viewMode === '3d') setFullMapOpen((v) => !v);
+            if (e.code === 'Escape') setFullMapOpen(false);
         };
         const onKeyUp = (e) => {
             keysRef.current[e.code] = false;
@@ -290,7 +359,7 @@ export default function GameRoot() {
             window.removeEventListener('keydown', onKeyDown);
             window.removeEventListener('keyup', onKeyUp);
         };
-    }, [nearbyTarget, viewMode, chapter, practiceReady, examReady, materialPercent]);
+    }, [nearbyTarget, viewMode, chapter, practiceReady, examReady, materialPercent, activeMaterial, fullMapOpen, elbiraOpen]);
 
     if (isLoading || !chapter) {
         return (
@@ -303,6 +372,59 @@ export default function GameRoot() {
 
     const learningZone =
         chapter.zones?.find((z) => z.type === 'learning') || chapter.zones?.[0];
+
+    // Penanda minimap: papan materi, NPC, terminal latihan, gerbang ujian (posisi sama dengan ZoneScene).
+    const mapMarkers = [];
+    (learningZone?.npcs || []).forEach((npc, idx) => {
+        const pos = Array.isArray(npc.position) && npc.position.length >= 3 ? npc.position : idx === 0 ? [-15, 0, -10] : idx === 1 ? [-3, 0, -22] : [15, 0, -10];
+        mapMarkers.push({ id: `npc-${npc.id}`, kind: 'npc', x: pos[0], z: pos[2], color: '#e2e8f0', label: npc.name });
+    });
+    (learningZone?.interactables || []).forEach((item, idx) => {
+        const pos = Array.isArray(item.position) && item.position.length >= 3 ? item.position : idx === 0 ? [-18, 0, -10] : idx === 1 ? [0, 0, -22] : [18, 0, -10];
+        const mat = chapter.materials.find((m) => m.id === item.material_id);
+        const order = mat?.order || idx + 1;
+        const done = Boolean(mat?.is_completed);
+        mapMarkers.push({
+            id: `obj-${item.id}`,
+            kind: 'material',
+            x: pos[0],
+            z: pos[2],
+            color: done ? '#10b981' : '#0ea5e9',
+            glyph: done ? '✓' : String(order),
+            short: `Materi ${order}`,
+            label: mat?.title || item.label,
+            status: done ? 'Sudah dipelajari' : 'Belum dipelajari',
+            pulse: currentObjective?.materialId === mat?.id,
+        });
+    });
+    mapMarkers.push({
+        id: 'portal-practice',
+        kind: 'practice',
+        x: -34,
+        z: 10,
+        color: '#f59e0b',
+        glyph: '?',
+        short: 'Latihan Soal',
+        label: 'Terminal Latihan Soal',
+        status: practicePassed ? 'Lulus KKM' : practiceReady ? 'Terbuka · capai KKM ' + (chapter.kkm || 75) : 'Terkunci · selesaikan materi',
+        locked: !practiceReady,
+        pulse: currentObjective?.kind === 'portal_practice',
+    });
+    mapMarkers.push({
+        id: 'portal-exam',
+        kind: 'exam',
+        x: 34,
+        z: 10,
+        color: '#10b981',
+        glyph: '★',
+        short: 'Zona Ujian',
+        label: 'Gerbang Zona Ujian Resmi',
+        status: examReady ? 'Terbuka' : 'Terkunci · lulus latihan dulu',
+        locked: !examReady,
+        pulse: currentObjective?.kind === 'portal_exam',
+    });
+    const mapObjective = currentObjective?.targetPos ? { x: currentObjective.targetPos[0], z: currentObjective.targetPos[2], color: currentObjective.color || '#38bdf8' } : null;
+    const overlayOpen = Boolean(activeMaterial) || fullMapOpen || elbiraOpen;
 
     const handleSelectOption = (attemptQuestionId, label) => {
         if (!activeAttempt || activeAttempt.status !== 'in_progress') return;
@@ -321,260 +443,29 @@ export default function GameRoot() {
         });
     };
 
-    const formatTimer = (sec) => {
-        const m = Math.floor(sec / 60);
-        const s = sec % 60;
-        return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-    };
-
     // =========================================================
-    // MODE FOKUS LATIHAN SOAL & ZONA UJIAN RESMI (2D LAYAR PENUH)
+    // ARENA LATIHAN SOAL & ZONA UJIAN RESMI (LAYAR PENUH BERGAYA GAME)
     // =========================================================
     if ((viewMode === 'practice' || viewMode === 'exam') && activeAttempt) {
-        const isFinished = ['submitted', 'expired'].includes(activeAttempt.status);
-        const currentQ = activeAttempt.questions?.[currentQIndex];
-
         return (
-            <div className="min-h-screen bg-slate-950 text-slate-100 p-4 sm:p-6 lg:p-8">
-                <Toast
-                    message={toast?.message}
-                    type={toast?.type}
-                    onClose={() => setToast(null)}
+            <>
+                <Toast message={toast?.message} type={toast?.type} onClose={() => setToast(null)} />
+                <QuizArena
+                    mode={viewMode}
+                    chapter={chapter}
+                    attempt={activeAttempt}
+                    index={currentQIndex}
+                    setIndex={setCurrentQIndex}
+                    onSelect={handleSelectOption}
+                    onSubmit={() => submitAttemptMutation.mutate(activeAttempt.id)}
+                    submitting={submitAttemptMutation.isPending}
+                    remainingSec={remainingSec}
+                    onBack={() => setViewMode('3d')}
+                    onRetry={() => startPracticeMutation.mutate()}
+                    onStartExam={() => activeExam && startExamMutation.mutate(activeExam.id)}
+                    canStartExam={Boolean(activeExam)}
                 />
-                <div className="max-w-5xl mx-auto space-y-6">
-                    {/* Header Ujian / Latihan */}
-                    <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-2xl bg-slate-900 border border-slate-800">
-                        <div>
-                            <Badge variant={viewMode === 'exam' ? 'warning' : 'info'}>
-                                {viewMode === 'exam'
-                                    ? 'ZONA UJIAN RESMI (MODE FOKUS)'
-                                    : 'LATIHAN SOAL (SYARAT KKM 75)'}
-                            </Badge>
-                            <h1 className="text-lg font-extrabold text-white mt-1">
-                                BAB {chapter.number}: {chapter.title}
-                            </h1>
-                        </div>
-
-                        <div className="flex items-center gap-3">
-                            {viewMode === 'exam' && !isFinished && (
-                                <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-300 font-extrabold text-sm">
-                                    <Clock className="w-4 h-4" />
-                                    <span>{formatTimer(remainingSec)}</span>
-                                </div>
-                            )}
-                            <Button
-                                variant="secondary"
-                                size="sm"
-                                onClick={() => setViewMode('3d')}
-                            >
-                                <ArrowLeft className="w-4 h-4" />
-                                <span>Kembali ke Zona Belajar</span>
-                            </Button>
-                        </div>
-                    </div>
-
-                    {/* Ringkasan Hasil setelah Submit */}
-                    {isFinished && (
-                        <div className="p-6 rounded-2xl bg-slate-900 border-2 border-cyan-500/40 flex flex-wrap items-center justify-between gap-6">
-                            <div className="space-y-1">
-                                <p className="text-xs uppercase font-bold text-cyan-400">
-                                    Hasil Evaluasi Server
-                                </p>
-                                <h2 className="text-3xl font-extrabold text-white">
-                                    Nilai Anda: {activeAttempt.score}{' '}
-                                    <span className="text-base font-medium text-slate-400">
-                                        ({activeAttempt.correct_count}/{activeAttempt.total_questions} Benar)
-                                    </span>
-                                </h2>
-                                <p className="text-xs text-slate-300">
-                                    {activeAttempt.passed
-                                        ? 'Selamat! Nilai Anda telah melampaui KKM (75). Zona Ujian Resmi kini terbuka!'
-                                        : 'Nilai belum mencapai KKM (75). Silakan pelajari pembahasan di bawah dan ulangi latihan.'}
-                                </p>
-                            </div>
-                            <div className="flex flex-wrap gap-3">
-                                {viewMode === 'practice' && (
-                                    <Button
-                                        onClick={() => startPracticeMutation.mutate()}
-                                        variant="secondary"
-                                    >
-                                        Ulangi Latihan Soal
-                                    </Button>
-                                )}
-                                {activeAttempt.passed && viewMode === 'practice' && activeExam && (
-                                    <Button
-                                        variant="success"
-                                        onClick={() => startExamMutation.mutate(activeExam.id)}
-                                    >
-                                        <ShieldCheck className="w-4 h-4" />
-                                        <span>Masuk Zona Ujian Resmi</span>
-                                    </Button>
-                                )}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Navigasi Nomor Soal & Butir Soal Aktif */}
-                    <div className="grid lg:grid-cols-12 gap-6">
-                        <div className="lg:col-span-4 space-y-4">
-                            <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
-                                <h3 className="text-xs font-bold uppercase text-slate-400">
-                                    Navigasi Nomor Soal
-                                </h3>
-                                <div className="grid grid-cols-5 gap-2">
-                                    {activeAttempt.questions.map((q, idx) => {
-                                        const isCurrent = idx === currentQIndex;
-                                        let btnStyle = 'bg-slate-800 text-slate-300 border-slate-700';
-                                        if (isFinished) {
-                                            btnStyle = q.is_correct
-                                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
-                                                : 'bg-rose-500/20 text-rose-300 border-rose-500/50';
-                                        } else if (q.is_answered) {
-                                            btnStyle = 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50';
-                                        }
-                                        return (
-                                            <button
-                                                key={q.attempt_question_id}
-                                                type="button"
-                                                onClick={() => setCurrentQIndex(idx)}
-                                                className={`h-10 rounded-xl font-bold text-xs border transition cursor-pointer ${btnStyle} ${
-                                                    isCurrent ? 'ring-2 ring-cyan-400' : ''
-                                                }`}
-                                            >
-                                                {q.order}
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-
-                                {!isFinished && (
-                                    <div className="pt-3 border-t border-slate-800">
-                                        <Button
-                                            variant="success"
-                                            className="w-full"
-                                            disabled={submitAttemptMutation.isPending}
-                                            onClick={() => submitAttemptMutation.mutate(activeAttempt.id)}
-                                        >
-                                            <CheckCircle2 className="w-4 h-4" />
-                                            <span>
-                                                {submitAttemptMutation.isPending
-                                                    ? 'Mengumpulkan...'
-                                                    : 'Kumpulkan Jawaban'}
-                                            </span>
-                                        </Button>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        <div className="lg:col-span-8">
-                            {currentQ && (
-                                <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-5">
-                                    <div className="flex items-center justify-between">
-                                        <Badge variant="info">
-                                            Soal Nomor {currentQ.order} dari {activeAttempt.total_questions}
-                                        </Badge>
-                                        {currentQ.is_answered && !isFinished && (
-                                            <span className="text-xs text-emerald-400 font-semibold">
-                                                ✓ Tersimpan Otomatis
-                                            </span>
-                                        )}
-                                    </div>
-
-                                    {currentQ.stimulus && (
-                                        <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-300 leading-relaxed italic">
-                                            {currentQ.stimulus}
-                                        </div>
-                                    )}
-
-                                    <p className="text-base font-bold text-white leading-relaxed whitespace-pre-line">
-                                        {currentQ.stem}
-                                    </p>
-
-                                    <div className="space-y-2.5">
-                                        {currentQ.options.map((opt) => {
-                                            const isSelected = currentQ.selected_label === opt.label;
-                                            const isCorrectOpt =
-                                                isFinished && currentQ.correct_label === opt.label;
-
-                                            let optClass =
-                                                'bg-slate-950 border-slate-800 text-slate-200 hover:border-slate-600';
-                                            if (isFinished) {
-                                                if (isCorrectOpt) {
-                                                    optClass =
-                                                        'bg-emerald-500/15 border-emerald-500 text-emerald-200';
-                                                } else if (isSelected && !isCorrectOpt) {
-                                                    optClass =
-                                                        'bg-rose-500/15 border-rose-500 text-rose-200';
-                                                }
-                                            } else if (isSelected) {
-                                                optClass =
-                                                    'bg-cyan-500/15 border-cyan-400 text-cyan-200';
-                                            }
-
-                                            return (
-                                                <button
-                                                    key={opt.label}
-                                                    type="button"
-                                                    disabled={isFinished}
-                                                    onClick={() =>
-                                                        handleSelectOption(
-                                                            currentQ.attempt_question_id,
-                                                            opt.label
-                                                        )
-                                                    }
-                                                    className={`w-full p-3.5 rounded-xl border text-left flex items-start gap-3 transition cursor-pointer ${optClass}`}
-                                                >
-                                                    <span className="w-7 h-7 rounded-lg bg-slate-800 flex items-center justify-center font-extrabold text-xs shrink-0">
-                                                        {opt.label}
-                                                    </span>
-                                                    <span className="text-sm whitespace-pre-line flex-1">
-                                                        {opt.text}
-                                                    </span>
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-
-                                    {isFinished && currentQ.explanation && (
-                                        <div className="p-4 rounded-xl bg-cyan-500/10 border border-cyan-500/30 space-y-1">
-                                            <p className="text-xs font-extrabold text-cyan-300">
-                                                Kunci Jawaban: {currentQ.correct_label} · Pembahasan:
-                                            </p>
-                                            <p className="text-xs text-slate-200 leading-relaxed">
-                                                {currentQ.explanation}
-                                            </p>
-                                        </div>
-                                    )}
-
-                                    <div className="flex items-center justify-between pt-3 border-t border-slate-800">
-                                        <Button
-                                            variant="secondary"
-                                            size="sm"
-                                            disabled={currentQIndex === 0}
-                                            onClick={() => setCurrentQIndex((i) => Math.max(0, i - 1))}
-                                        >
-                                            Soal Sebelumnya
-                                        </Button>
-                                        <Button
-                                            variant="secondary"
-                                            size="sm"
-                                            disabled={currentQIndex >= activeAttempt.questions.length - 1}
-                                            onClick={() =>
-                                                setCurrentQIndex((i) =>
-                                                    Math.min(activeAttempt.questions.length - 1, i + 1)
-                                                )
-                                            }
-                                        >
-                                            Soal Berikutnya
-                                        </Button>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            </div>
+            </>
         );
     }
 
@@ -598,6 +489,11 @@ export default function GameRoot() {
                         practiceReady={practiceReady}
                         examReady={examReady}
                         currentObjective={currentObjective}
+                        inputLocked={overlayOpen}
+                        playerName={playerName}
+                        playerClass={playerClass}
+                        onElbiraOpen={openElbira}
+                        elbiraOpen={elbiraOpen}
                     />
                 </Canvas>
             ) : (
@@ -628,10 +524,10 @@ export default function GameRoot() {
                                 <Button
                                     size="sm"
                                     variant={mat.is_completed ? 'secondary' : 'primary'}
-                                    onClick={() => setActiveMaterial(mat)}
+                                    onClick={() => openMaterial(mat)}
                                 >
                                     <BookOpen className="w-4 h-4" />
-                                    <span>Baca Materi</span>
+                                    <span>Mulai Percakapan Materi</span>
                                 </Button>
                             </div>
                         ))}
@@ -649,6 +545,8 @@ export default function GameRoot() {
                         <ArrowLeft className="w-4 h-4 text-cyan-400" />
                         <span>Dashboard</span>
                     </Link>
+
+                    <MusicToggle compact />
 
                     <div className="hidden sm:flex items-center gap-2 px-3.5 py-2 rounded-2xl bg-slate-900/90 border border-slate-700 text-xs text-slate-200 backdrop-blur">
                         <MapPin className="w-4 h-4 text-cyan-400" />
@@ -730,14 +628,16 @@ export default function GameRoot() {
             {viewMode === '3d' && (
                 <div className="absolute top-14 left-1/2 -translate-x-1/2 max-w-xl w-[94%] sm:w-auto px-4 py-2 rounded-2xl bg-slate-900/90 border border-slate-700/80 shadow-2xl backdrop-blur-md z-20 pointer-events-auto flex items-center justify-between gap-4">
                     <div className="flex items-center gap-2.5 text-xs">
-                        <Navigation className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
+                        <span className="w-8 h-8 rounded-full bg-amber-400 text-slate-950 flex items-center justify-center shrink-0 shadow-lg">
+                            <ArrowUp className="w-5 h-5 transition-transform duration-200" strokeWidth={3} style={{ transform: `rotate(${relArrowDeg}deg)` }} />
+                        </span>
                         <div className="flex flex-col">
                             <div className="flex items-center gap-2">
                                 <span className="font-extrabold text-white text-xs">
                                     {currentObjective?.shortTitle}
                                 </span>
                                 <span className="text-[10px] font-bold text-amber-300 px-1.5 py-0.5 rounded-lg bg-amber-500/20 border border-amber-500/40">
-                                    {targetDist}m · {compassDir}
+                                    {targetDist}m · {relWord}
                                 </span>
                             </div>
                             <span className="text-[10px] text-slate-300 line-clamp-1">
@@ -780,7 +680,7 @@ export default function GameRoot() {
                             <button
                                 key={m.id}
                                 type="button"
-                                onClick={() => setActiveMaterial(m)}
+                                onClick={() => openMaterial(m)}
                                 className={`w-full text-left flex items-center gap-2 py-1.5 px-2 rounded-xl transition cursor-pointer ${
                                     m.is_completed ? 'bg-slate-950/40 hover:bg-slate-800/50' : 'bg-slate-800/80 hover:bg-slate-700/80'
                                 }`}
@@ -804,14 +704,78 @@ export default function GameRoot() {
                 </div>
             )}
 
+            {/* Minimap gaya GTA: desktop di kanan atas, HP di atas tombol interaksi */}
+            {viewMode === '3d' && (
+                <>
+                    <div className="absolute top-16 right-3 z-20 hidden md:block">
+                        <MiniMap mapKey={learningZone?.map_key} markers={mapMarkers} objective={mapObjective} onOpen={() => setFullMapOpen(true)} size={176} />
+                    </div>
+                    <div className="absolute bottom-[92px] right-4 z-20 md:hidden">
+                        <MiniMap mapKey={learningZone?.map_key} markers={mapMarkers} objective={mapObjective} onOpen={() => setFullMapOpen(true)} size={118} rangeM={40} />
+                    </div>
+                </>
+            )}
+            {fullMapOpen && viewMode === '3d' && (
+                <FullMap
+                    mapKey={learningZone?.map_key}
+                    markers={mapMarkers}
+                    objective={mapObjective}
+                    title={`Peta ${chapter.setting_location || 'Kawasan'}`}
+                    onClose={() => setFullMapOpen(false)}
+                />
+            )}
+
+            {/* Petunjuk kontrol kamera (sekali tampil) */}
+            {viewMode === '3d' && showControlsHint && !activeMaterial && (
+                <div className="absolute inset-x-0 top-1/3 z-30 flex justify-center px-4 pointer-events-none">
+                    <div className="pointer-events-auto animate-pop max-w-sm rounded-3xl bg-slate-950/90 border-2 border-banten-gold/70 p-4 text-center shadow-2xl">
+                        <Move3d className="w-9 h-9 mx-auto text-amber-300 animate-wiggle" />
+                        <p className="font-game text-xl text-white mt-1">Kamera 360°</p>
+                        <p className="text-xs text-slate-300 mt-1 hidden md:block">
+                            Klik kiri lalu geser mouse/touchpad untuk memutar kamera. Scroll untuk zoom. WASD untuk berjalan, E untuk interaksi, M untuk peta, C untuk bertanya ke Elbira si kucing.
+                        </p>
+                        <p className="text-xs text-slate-300 mt-1 md:hidden">
+                            Joystick kiri untuk berjalan. Geser layar bagian kanan untuk memutar kamera dan arah jalan. Cubit dua jari untuk zoom. Ketuk Elbira si kucing untuk bertanya.
+                        </p>
+                        <button type="button" onClick={dismissControlsHint} className="btn-chunky mt-3 px-5 py-2 rounded-2xl bg-gradient-to-b from-amber-300 to-orange-500 text-slate-950 font-game text-base cursor-pointer">
+                            Siap, Main!
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {/* Kontrol Mobile (Joystick + Tombol Interaksi) */}
             {viewMode === '3d' && (
                 <div className="absolute bottom-5 left-5 right-5 flex items-end justify-between pointer-events-none z-20">
-                    <div className="pointer-events-auto">
+                    <div className="pointer-events-auto relative">
+                        {/* HP: tombol Elbira di atas joystick agar tidak menutupi minimap */}
+                        <button
+                            type="button"
+                            onClick={openElbira}
+                            className="md:hidden btn-chunky absolute -top-[78px] left-1 w-16 h-16 rounded-2xl bg-gradient-to-b from-amber-200 to-orange-400 border-2 border-banten-night flex flex-col items-center justify-center cursor-pointer"
+                            aria-label="Tanya Elbira, kucing asisten belajar"
+                        >
+                            <CatAvatar size={36} />
+                            <span className="font-game text-[10px] text-banten-night leading-none">Elbira</span>
+                        </button>
                         <Joystick />
                     </div>
 
                     <div className="flex flex-col items-end gap-2 pointer-events-auto">
+                        <button
+                            type="button"
+                            onClick={openElbira}
+                            className="btn-chunky hidden md:flex items-center gap-2 pl-1.5 pr-3.5 py-1.5 rounded-2xl bg-gradient-to-b from-amber-200 to-orange-400 border-2 border-banten-night text-banten-night font-game text-sm cursor-pointer"
+                            aria-label="Tanya Elbira, kucing asisten belajar"
+                        >
+                            <span className="w-9 h-9 rounded-xl bg-white/70 border-2 border-banten-night/40 flex items-center justify-center overflow-hidden">
+                                <CatAvatar size={32} />
+                            </span>
+                            <span className="leading-tight text-left">
+                                Tanya Elbira
+                                <span className="hidden sm:block text-[9px] font-sans font-extrabold opacity-70">Asisten belajar · [C]</span>
+                            </span>
+                        </button>
                         <button
                             type="button"
                             disabled={!nearbyTarget}
@@ -831,56 +795,36 @@ export default function GameRoot() {
                 </div>
             )}
 
-            {/* Modal Panel Materi & Dialog NPC */}
-            <Modal
-                isOpen={Boolean(activeMaterial)}
-                onClose={() => {
-                    setActiveMaterial(null);
-                    setActiveNpc(null);
-                }}
-                title={activeMaterial?.title || 'Materi Pembelajaran'}
-                maxWidth="max-w-3xl"
-            >
-                {activeMaterial && (
-                    <div className="space-y-5">
-                        {activeNpc && (
-                            <div className="p-4 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 flex items-start gap-3">
-                                <Sparkles className="w-5 h-5 text-cyan-400 shrink-0 mt-0.5" />
-                                <div>
-                                    <p className="text-xs font-extrabold text-cyan-300">
-                                        {activeNpc.name} · {activeNpc.role_label}
-                                    </p>
-                                    <p className="text-xs text-slate-200 mt-1">{activeNpc.greeting}</p>
-                                </div>
-                            </div>
-                        )}
+            {/* Chat Elbira — kucing asisten belajar AI */}
+            {elbiraOpen && (
+                <ElbiraChat
+                    chapter={chapter}
+                    playerName={playerName}
+                    messages={elbiraMessages}
+                    setMessages={setElbiraMessages}
+                    onClose={closeElbira}
+                />
+            )}
 
-                        <div
-                            className="prose prose-invert max-w-none text-sm text-slate-200 leading-relaxed space-y-3"
-                            dangerouslySetInnerHTML={{ __html: activeMaterial.content }}
-                        />
-
-                        <div className="pt-4 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3">
-                            <Badge variant={activeMaterial.is_completed ? 'success' : 'warning'}>
-                                {activeMaterial.is_completed
-                                    ? '✓ Materi Ini Sudah Dipelajari'
-                                    : 'Belum Ditandai Selesai'}
-                            </Badge>
-                            <Button
-                                variant="success"
-                                disabled={completeMaterialMutation.isPending}
-                                onClick={async () => {
-                                    await completeMaterialMutation.mutateAsync(activeMaterial.id);
-                                    setActiveMaterial(null);
-                                }}
-                            >
-                                <CheckCircle2 className="w-4 h-4" />
-                                <span>Saya Sudah Paham & Tandai Selesai (+15 XP)</span>
-                            </Button>
-                        </div>
-                    </div>
-                )}
-            </Modal>
+            {/* Materi disampaikan NPC sebagai percakapan bertahap */}
+            {activeMaterial && (
+                <MaterialDialogue
+                    key={activeMaterial.id}
+                    material={activeMaterial}
+                    npc={activeNpc}
+                    playerName={playerName}
+                    completing={completeMaterialMutation.isPending}
+                    onClose={() => {
+                        setActiveMaterial(null);
+                        setActiveNpc(null);
+                    }}
+                    onComplete={async () => {
+                        await completeMaterialMutation.mutateAsync(activeMaterial.id);
+                        setActiveMaterial(null);
+                        setActiveNpc(null);
+                    }}
+                />
+            )}
         </div>
     );
 }

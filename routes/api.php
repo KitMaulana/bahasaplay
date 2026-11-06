@@ -43,6 +43,9 @@ Route::prefix('v1')->group(function () {
             Route::get('/attempts/{attempt}', [StudentController::class, 'showAttempt']);
             Route::put('/attempts/{attempt}/answers', [StudentController::class, 'saveAnswer']);
             Route::post('/attempts/{attempt}/submit', [StudentController::class, 'submitAttempt']);
+
+            // Elbira — kucing asisten belajar AI (dibatasi 15 pesan/menit per pengguna)
+            Route::post('/elbira/chat', [StudentController::class, 'elbiraChat'])->middleware('throttle:15,1');
         });
 
         // =====================================================
@@ -90,10 +93,14 @@ Route::prefix('v1')->group(function () {
             Route::put('/students/{student}', [TeacherController::class, 'updateStudent']);
             Route::delete('/students/{student}', [TeacherController::class, 'destroyStudent']);
             Route::post('/students/import', [TeacherController::class, 'importStudents']);
+            Route::get('/students/{student}/progress', [TeacherController::class, 'studentProgress']);
+            Route::get('/activity-recap', [TeacherController::class, 'activityRecap']);
+            Route::get('/activity-recap/export', [TeacherController::class, 'exportActivityRecap']);
             Route::post('/classes', [TeacherController::class, 'storeClass']);
             Route::delete('/classes/{schoolClass}', [TeacherController::class, 'destroyClass']);
 
             // AI Question Generator (Google Gemini API)
+            Route::get('/ai/status', [TeacherController::class, 'aiStatus']);
             Route::get('/ai/generations', [TeacherController::class, 'aiGenerations']);
             Route::post('/ai/questions/generate', [TeacherController::class, 'generateAiQuestions']);
             Route::post('/ai/items/{item}/approve', [TeacherController::class, 'approveAiItem']);

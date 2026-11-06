@@ -26,6 +26,10 @@ use App\Models\Zone;
 use App\Services\AI\GeminiQuestionService;
 use App\Services\Assessment\AttemptService;
 use App\Services\Report\ReportService;
+use App\Http\Requests\Teacher\ActivityRecapRequest;
+use App\Http\Requests\Teacher\ImportStudentsRequest;
+use App\Services\Report\ActivityRecapService;
+use App\Services\Report\StudentImportService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -39,7 +43,9 @@ class TeacherController extends Controller
     public function __construct(
         protected GeminiQuestionService $geminiService,
         protected ReportService $reportService,
-        protected AttemptService $attemptService
+        protected AttemptService $attemptService,
+        protected ActivityRecapService $activityRecapService,
+        protected StudentImportService $studentImportService
     ) {}
 
     public function overview(): JsonResponse
@@ -727,6 +733,8 @@ class TeacherController extends Controller
 
     public function updateStudent(Request $request, User $student): JsonResponse
     {
+        abort_unless($student->hasRole('student'), 404, 'Siswa tidak ditemukan.');
+
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:191'],
             'nisn' => ['required', 'string', 'max:50', 'unique:users,username,'.$student->id],
@@ -757,6 +765,8 @@ class TeacherController extends Controller
 
     public function destroyStudent(User $student): JsonResponse
     {
+        abort_unless($student->hasRole('student'), 404, 'Siswa tidak ditemukan.');
+
         $student->delete();
 
         return response()->json([
@@ -765,48 +775,83 @@ class TeacherController extends Controller
         ]);
     }
 
-    public function importStudents(Request $request): JsonResponse
+    public function importStudents(ImportStudentsRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'rows' => ['required', 'array', 'min:1'],
-            'rows.*.name' => ['required', 'string'],
-            'rows.*.nisn' => ['required', 'string'],
-            'rows.*.class_name' => ['nullable', 'string'],
+        $result = $this->studentImportService->import($request->validated('rows'));
+
+        ActivityLog::record($request->user()->id, 'teacher.students.imported', null, null, [
+            'created' => $result['created'],
+            'updated' => $result['updated'],
+            'skipped' => count($result['skipped']),
         ]);
 
-        $importedCount = 0;
-        DB::transaction(function () use ($validated, &$importedCount) {
-            foreach ($validated['rows'] as $row) {
-                $nisn = trim($row['nisn']);
-                if ($nisn === '') {
-                    continue;
-                }
-
-                $className = trim($row['class_name'] ?? 'XII-1') ?: 'XII-1';
-                $schoolClass = SchoolClass::firstOrCreate(
-                    ['name' => $className, 'academic_year' => Setting::getValue('academic_year', '2026/2027')],
-                    ['grade' => 12]
-                );
-
-                $student = User::updateOrCreate(
-                    ['username' => $nisn],
-                    [
-                        'name' => trim($row['name']),
-                        'password' => Hash::make($nisn),
-                        'avatar_config' => ['skinColor' => '#fde68a', 'shirtColor' => '#06b6d4'],
-                        'is_active' => true,
-                    ]
-                );
-
-                $student->syncRoles(['student']);
-                $student->schoolClasses()->sync([$schoolClass->id]);
-                $importedCount++;
-            }
-        });
+        $message = "Impor selesai: {$result['created']} siswa baru, {$result['updated']} diperbarui";
+        $message .= count($result['skipped']) ? ', '.count($result['skipped']).' dilewati.' : '.';
 
         return response()->json([
-            'data' => ['imported_count' => $importedCount],
-            'message' => "Berhasil mengimpor {$importedCount} data siswa (password awal = NISN).",
+            'data' => $result + ['imported_count' => $result['created'] + $result['updated']],
+            'message' => $message.' Kata sandi awal siswa baru = NISN.',
+        ]);
+    }
+
+    // =========================================================
+    // PEMANTAUAN PROGRES & REKAP AKTIVITAS SISWA
+    // =========================================================
+    public function activityRecap(ActivityRecapRequest $request): JsonResponse
+    {
+        return response()->json([
+            'data' => $this->activityRecapService->recap(
+                $request->filled('class_id') ? (int) $request->validated('class_id') : null,
+                $request->validated('from'),
+                $request->validated('to'),
+            ),
+        ]);
+    }
+
+    public function exportActivityRecap(ActivityRecapRequest $request): StreamedResponse
+    {
+        $recap = $this->activityRecapService->recap(
+            $request->filled('class_id') ? (int) $request->validated('class_id') : null,
+            $request->validated('from'),
+            $request->validated('to'),
+        );
+        $filename = 'Rekap_Aktivitas_Siswa_'.$recap['range']['from'].'_sd_'.$recap['range']['to'].'.csv';
+
+        return response()->streamDownload(function () use ($recap) {
+            $h = fopen('php://output', 'w');
+            fwrite($h, "\xEF\xBB\xBF");
+            fputcsv($h, ['REKAP AKTIVITAS SISWA — BAHASA PLAY.AI']);
+            fputcsv($h, ['Periode', $recap['range']['from'].' s.d. '.$recap['range']['to']]);
+            fputcsv($h, []);
+            fputcsv($h, ['No', 'NISN', 'Nama Siswa', 'Kelas', 'Login', 'Materi Selesai', 'Latihan Dikumpulkan', 'Latihan Lulus', 'Ujian Dikumpulkan', 'Rata-rata Nilai', 'Hari Aktif', 'Total Aktivitas', 'Keaktifan', 'Aktivitas Terakhir']);
+            foreach ($recap['students'] as $i => $r) {
+                fputcsv($h, [
+                    $i + 1,
+                    $r['nisn'],
+                    $r['name'],
+                    $r['class_name'],
+                    $r['logins'],
+                    $r['materials_completed'],
+                    $r['practice_submitted'],
+                    $r['practice_passed'],
+                    $r['exam_submitted'],
+                    $r['avg_score'] ?? '-',
+                    $r['active_days'],
+                    $r['total_activities'],
+                    strtoupper($r['engagement']),
+                    $r['last_activity_at'] ? \Illuminate\Support\Carbon::parse($r['last_activity_at'])->timezone(config('app.timezone'))->format('d/m/Y H:i') : '-',
+                ]);
+            }
+            fclose($h);
+        }, $filename, ['Content-Type' => 'text/csv; charset=UTF-8']);
+    }
+
+    public function studentProgress(User $student): JsonResponse
+    {
+        abort_unless($student->hasRole('student'), 404, 'Siswa tidak ditemukan.');
+
+        return response()->json([
+            'data' => $this->activityRecapService->studentDetail($student),
         ]);
     }
 
@@ -847,6 +892,11 @@ class TeacherController extends Controller
     // =========================================================
     // AI QUESTION GENERATOR (GOOGLE GEMINI API)
     // =========================================================
+    public function aiStatus(): JsonResponse
+    {
+        return response()->json(['data' => $this->geminiService->status()]);
+    }
+
     public function aiGenerations(): JsonResponse
     {
         $generations = AiGeneration::with(['items', 'chapter', 'material'])

@@ -10,6 +10,7 @@ use App\Models\User;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Sleep;
 use Tests\TestCase;
 
 class LmsAndAssessmentTest extends TestCase
@@ -256,7 +257,7 @@ class LmsAndAssessmentTest extends TestCase
                                     'text' => json_encode([
                                         [
                                             'stem' => 'Apa fungsi utama surat lamaran pekerjaan?',
-                                            'stimulus' => '',
+                                            'stimulus' => 'Kutipan: Saya bermaksud melamar posisi staf administrasi di perusahaan Bapak.',
                                             'options' => [
                                                 'A' => 'Mengajukan permohonan resmi untuk mengisi posisi pekerjaan.',
                                                 'B' => 'Menceritakan kisah liburan.',
@@ -303,5 +304,36 @@ class LmsAndAssessmentTest extends TestCase
         $this->assertEquals('approved', $approveRes->json('data.item.status'));
         $this->assertEquals('ai', $approveRes->json('data.question.source'));
         $this->assertEquals('published', $approveRes->json('data.question.status'));
+
+        // Kutipan/stimulus harus ikut tersimpan ke Bank Soal dan muncul di daftar guru
+        $this->assertStringContainsString('melamar posisi staf administrasi', $approveRes->json('data.question.stimulus'));
+        $list = $this->actingAs($teacher)->getJson('/api/v1/teacher/questions')->assertOk()->json('data');
+        $saved = collect($list)->firstWhere('id', $approveRes->json('data.question.id'));
+        $this->assertStringContainsString('melamar posisi staf administrasi', $saved['stimulus']);
+    }
+
+    public function test_ai_generator_reports_status_sends_key_in_header_and_explains_quota_errors(): void
+    {
+        Sleep::fake();
+        config(['services.gemini.key' => 'test-secret-gemini-key', 'services.gemini.model' => 'gemini-2.5-flash']);
+        Http::fake(['generativelanguage.googleapis.com/*' => Http::response(['error' => ['message' => 'Quota exceeded']], 429)]);
+
+        $teacher = User::where('username', 'bangkit')->firstOrFail();
+
+        $this->actingAs($teacher)->getJson('/api/v1/teacher/ai/status')
+            ->assertOk()
+            ->assertJsonPath('data.enabled', true)
+            ->assertJsonPath('data.model', 'gemini-2.5-flash')
+            ->assertDontSee('test-secret-gemini-key');
+
+        $res = $this->actingAs($teacher)->postJson('/api/v1/teacher/ai/questions/generate', [
+            'chapter_id' => Chapter::where('number', 1)->value('id'),
+            'count' => 2,
+            'difficulty' => 'easy',
+        ])->assertStatus(422);
+
+        $this->assertStringContainsString('HTTP 429', $res->json('errors.gemini.0'));
+        Http::assertSent(fn ($req) => $req->hasHeader('x-goog-api-key', 'test-secret-gemini-key') && ! str_contains($req->url(), 'key='));
+        $this->assertDatabaseHas('ai_generations', ['status' => 'failed']);
     }
 }

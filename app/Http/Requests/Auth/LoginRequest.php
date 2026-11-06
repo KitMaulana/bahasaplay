@@ -16,6 +16,8 @@ class LoginRequest extends FormRequest
         return [
             'identifier' => ['required', 'string', 'max:191'],
             'password' => ['required', 'string'],
+            // Peran yang dipilih di halaman login; server memastikan akun benar-benar berperan itu.
+            'role' => ['required', 'in:student,teacher,admin'],
         ];
     }
 
@@ -24,6 +26,8 @@ class LoginRequest extends FormRequest
         return [
             'identifier.required' => 'NISN, Email, atau Username wajib diisi.',
             'password.required' => 'Kata sandi wajib diisi.',
+            'role.required' => 'Pilih peran masuk terlebih dahulu.',
+            'role.in' => 'Peran masuk tidak dikenal.',
         ];
     }
 }

@@ -16,6 +16,8 @@ use App\Models\MissionStep;
 use App\Models\Setting;
 use App\Models\UserAchievement;
 use App\Models\UserStat;
+use App\Http\Requests\Student\ElbiraChatRequest;
+use App\Services\AI\ElbiraChatService;
 use App\Services\Assessment\AttemptService;
 use App\Services\Learning\ProgressService;
 use Illuminate\Http\JsonResponse;
@@ -27,6 +29,18 @@ class StudentController extends Controller
         protected ProgressService $progressService,
         protected AttemptService $attemptService
     ) {}
+
+    /** Chat dengan Elbira, kucing asisten belajar (hanya topik Bahasa Indonesia). */
+    public function elbiraChat(ElbiraChatRequest $request, ElbiraChatService $elbira): JsonResponse
+    {
+        $validated = $request->validated();
+        $chapter = isset($validated['chapter_id']) ? Chapter::find($validated['chapter_id']) : null;
+        $material = isset($validated['material_id']) ? Material::find($validated['material_id']) : null;
+
+        return response()->json([
+            'data' => $elbira->chat($request->user(), $validated['message'], $chapter, $material, $validated['history'] ?? []),
+        ]);
+    }
 
     public function dashboard(Request $request): JsonResponse
     {

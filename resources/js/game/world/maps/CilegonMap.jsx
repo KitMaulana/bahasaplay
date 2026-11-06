@@ -192,7 +192,7 @@ export default function CilegonMap() {
             })}
 
             {/* Jalan utama menuju kawasan industri */}
-            <Road p={[0, 0, -30]} length={36} width={6} />
+            <Road p={[0, 0, -24]} length={24} width={6} />
             <Road p={[0, 0, 15]} length={70} width={5} r={Math.PI / 2} />
             <IndustrialGate p={[0, 0, -15]} />
 

@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import api from '../lib/api';
 import { useAuthStore } from '../stores/authStore';
+import BlockyAvatar from '../components/game/BlockyAvatar';
 import AppShell from '../components/layout/AppShell';
 import Card from '../components/ui/Card';
 import Badge from '../components/ui/Badge';
@@ -114,11 +115,11 @@ export default function StudentDashboardPage() {
     return (
         <AppShell
             title={`Halo, ${student.name}!`}
-            subtitle={`NISN: ${student.nisn} · Kelas ${student.class_name} · SMAN 1 Ciruas`}
+            subtitle={`NISN: ${student.nisn} · Kelas ${student.class_name}`}
             actions={
                 <Button variant="secondary" size="sm" onClick={openAvatarModal}>
                     <User className="w-3.5 h-3.5" />
-                    <span>Avatar 3D & Sandi</span>
+                    <span className="hidden sm:inline">Avatar 3D & Sandi</span>
                 </Button>
             }
         >
@@ -126,14 +127,11 @@ export default function StudentDashboardPage() {
 
             {/* Kartu Profil, Level XP & Progres Total */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                <Card className="lg:col-span-2 bg-gradient-to-br from-slate-900 via-slate-900 to-cyan-950/40 border-cyan-500/30">
+                <Card className="lg:col-span-2 bg-gradient-to-br from-slate-900 via-slate-900 to-banten-teal/30 border-banten-gold/40">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div className="flex items-center gap-4">
-                            <div
-                                className="w-14 h-14 rounded-2xl flex items-center justify-center font-extrabold text-xl text-slate-950 shadow-lg shrink-0 border-2 border-white/20"
-                                style={{ backgroundColor: student?.avatar_config?.shirtColor || '#06b6d4' }}
-                            >
-                                {student.name.charAt(0)}
+                            <div className="shrink-0 rounded-2xl bg-gradient-to-b from-sky-300 to-banten-teal border-2 border-white/30 p-1.5 animate-float">
+                                <BlockyAvatar preset="siswa" hair="short" size={64} skin={student?.avatar_config?.skinColor || '#fde68a'} />
                             </div>
                             <div>
                                 <div className="flex flex-wrap items-center gap-2">
@@ -141,7 +139,7 @@ export default function StudentDashboardPage() {
                                     <Badge variant="success">Level {student.level}</Badge>
                                     <Badge variant="warning">{student.xp} XP</Badge>
                                 </div>
-                                <h2 className="text-lg sm:text-xl font-extrabold text-white mt-1">
+                                <h2 className="font-game text-2xl sm:text-3xl text-white mt-1 tracking-wide">
                                     {student.name}
                                 </h2>
                                 <p className="text-xs text-slate-400">
@@ -150,15 +148,6 @@ export default function StudentDashboardPage() {
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-3">
-                            <Link
-                                to="/lab"
-                                className="px-4 py-2.5 rounded-xl bg-slate-800/90 hover:bg-slate-800 border border-slate-700 text-xs font-bold text-cyan-300 flex items-center gap-2"
-                            >
-                                <Gamepad2 className="w-4 h-4" />
-                                <span>Lab 3D</span>
-                            </Link>
-                        </div>
                     </div>
 
                     <div className="mt-5 pt-4 border-t border-slate-800/80">
@@ -204,54 +193,58 @@ export default function StudentDashboardPage() {
                 </Card>
             </div>
 
-            {/* Bagian Penghargaan Lengkap (Utama saat tab /student/achievements aktif, atau di bawah) */}
+            {/* Galeri Penghargaan (halaman tersendiri: /student/achievements) */}
             {isAchievementsTab && (
-                <Card
-                    title="Galeri Penghargaan BAHASA PLAY"
-                    subtitle="6 Pencapaian resmi pembelajaran Bahasa Indonesia Kelas XII"
-                >
+                <div className="space-y-4">
+                    <Card
+                        icon={Trophy}
+                        title="Galeri Penghargaan"
+                        subtitle={`${unlockedCount} dari ${achievements.length} lencana sudah kamu raih. Kumpulkan semuanya!`}
+                        action={
+                            <Link to="/student" className="btn-chunky px-4 py-2 rounded-2xl bg-gradient-to-b from-cyan-300 to-blue-600 border-2 border-blue-900/60 text-white text-sm font-extrabold">
+                                Kembali ke Beranda
+                            </Link>
+                        }
+                    >
+                        <ProgressBar value={achievements.length ? (unlockedCount / achievements.length) * 100 : 0} color="gold" size="lg" label="Lencana terkumpul" />
+                    </Card>
                     <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                         {achievements.map((ach) => (
                             <div
                                 key={ach.id}
-                                className={`p-4 rounded-2xl border transition ${
-                                    ach.unlocked
-                                        ? 'bg-gradient-to-br from-amber-500/15 to-slate-900 border-amber-400/40'
-                                        : 'bg-slate-900/50 border-slate-800/80 opacity-65'
+                                className={`rounded-3xl border-2 p-4 shadow-[0_5px_0_0_rgba(2,6,23,0.6)] ${
+                                    ach.unlocked ? 'bg-gradient-to-br from-amber-300/25 to-slate-900 border-banten-gold' : 'bg-slate-900/60 border-white/10'
                                 }`}
                             >
                                 <div className="flex items-start justify-between gap-3">
-                                    <div
-                                        className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                                            ach.unlocked
-                                                ? 'bg-amber-400 text-slate-950'
-                                                : 'bg-slate-800 text-slate-500'
-                                        }`}
-                                    >
-                                        <Award className="w-5 h-5" />
+                                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center border-2 border-banten-night/60 -rotate-3 ${ach.unlocked ? 'bg-banten-gold text-banten-night animate-float' : 'bg-slate-800 text-slate-500'}`}>
+                                        <Award className="w-7 h-7" />
                                     </div>
-                                    <Badge variant={ach.unlocked ? 'warning' : 'neutral'}>
-                                        {ach.unlocked ? `Terbuka (+${ach.xp} XP)` : `Terkunci (+${ach.xp} XP)`}
-                                    </Badge>
+                                    <Badge variant={ach.unlocked ? 'gold' : 'neutral'}>{ach.unlocked ? 'TERBUKA' : 'TERKUNCI'} · +{ach.xp} XP</Badge>
                                 </div>
-                                <h4 className="font-extrabold text-white text-sm mt-3">{ach.name}</h4>
-                                <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                                    {ach.description}
-                                </p>
+                                <h4 className={`font-game text-xl mt-3 ${ach.unlocked ? 'text-white' : 'text-slate-400'}`}>{ach.name}</h4>
+                                <p className="text-xs text-slate-400 mt-1 leading-relaxed">{ach.description}</p>
+                                {ach.unlocked && ach.earned_at && (
+                                    <p className="text-[11px] font-bold text-amber-200 mt-2">
+                                        Diraih {new Intl.DateTimeFormat('id-ID', { dateStyle: 'long', timeZone: 'Asia/Jakarta' }).format(new Date(ach.earned_at))}
+                                    </p>
+                                )}
                             </div>
                         ))}
                     </div>
-                </Card>
+                </div>
             )}
 
+            {!isAchievementsTab && (
+                <>
             {/* Daftar 6 BAB Pembelajaran & Dunia Game 3D */}
             <div className="space-y-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div>
-                        <h2 className="text-lg font-extrabold text-white">
+                    <div className="rounded-2xl bg-banten-night border-4 border-white shadow-[0_5px_0_0_#10213a] px-4 py-2.5">
+                        <h2 className="font-game text-xl text-white tracking-wide">
                             Peta BAB & Zona Dunia Game 3D (BAB 1 – BAB 6)
                         </h2>
-                        <p className="text-xs text-slate-400">
+                        <p className="text-xs text-slate-300">
                             Setiap BAB memiliki Zona Belajar & Latihan terpadu serta Zona Ujian resmi yang terbuka setelah nilai latihan mencapai KKM ({kkm_default}).
                         </p>
                     </div>
@@ -506,6 +499,9 @@ export default function StudentDashboardPage() {
                     </div>
                 )}
             </Card>
+
+                </>
+            )}
 
             {/* Modal Pembahasan Soal */}
             <Modal

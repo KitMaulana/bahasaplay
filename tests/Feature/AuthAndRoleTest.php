@@ -22,6 +22,7 @@ class AuthAndRoleTest extends TestCase
         $response = $this->postJson('/api/v1/auth/login', [
             'identifier' => '0081234501',
             'password' => '0081234501',
+            'role' => 'student',
         ]);
 
         $response->assertStatus(200)
@@ -34,6 +35,7 @@ class AuthAndRoleTest extends TestCase
         $response = $this->postJson('/api/v1/auth/login', [
             'identifier' => 'guru@smancir1.sch.id',
             'password' => 'smancir123',
+            'role' => 'teacher',
         ]);
 
         $response->assertStatus(200)
@@ -46,11 +48,39 @@ class AuthAndRoleTest extends TestCase
         $response = $this->postJson('/api/v1/auth/login', [
             'identifier' => 'admin',
             'password' => 'admin123',
+            'role' => 'admin',
         ]);
 
         $response->assertStatus(200)
             ->assertJsonPath('data.user.role', 'admin')
             ->assertJsonPath('data.redirect_to', '/admin');
+    }
+
+    public function test_login_is_rejected_when_selected_role_does_not_match_account(): void
+    {
+        $accounts = [
+            ['guru@smancir1.sch.id', 'smancir123', 'teacher'],
+            ['admin', 'admin123', 'admin'],
+            ['0081234501', '0081234501', 'student'],
+        ];
+
+        foreach ($accounts as [$identifier, $password, $realRole]) {
+            foreach (['student', 'teacher', 'admin'] as $wrongRole) {
+                if ($wrongRole === $realRole) {
+                    continue;
+                }
+                $this->postJson('/api/v1/auth/login', ['identifier' => $identifier, 'password' => $password, 'role' => $wrongRole])
+                    ->assertStatus(403)
+                    ->assertJsonMissingPath('data.token');
+            }
+        }
+
+        // Penolakan tidak boleh mencatat login maupun membuat token
+        $this->assertDatabaseMissing('activity_logs', ['action' => 'auth.login']);
+        $this->assertDatabaseCount('personal_access_tokens', 0);
+
+        // Peran wajib dikirim
+        $this->postJson('/api/v1/auth/login', ['identifier' => 'admin', 'password' => 'admin123'])->assertStatus(422);
     }
 
     public function test_student_cannot_access_teacher_or_admin_routes(): void

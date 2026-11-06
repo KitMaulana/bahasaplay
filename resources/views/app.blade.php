@@ -7,13 +7,13 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="BAHASA PLAY">
-    <meta name="description" content="BAHASA PLAY — Mainkan gamenya, pelajari bahasanya. Game-Based Learning Management System untuk Bahasa Indonesia SMA Kelas XII SMAN 1 Ciruas.">
-    <title>{{ config('app.name', 'BAHASA PLAY') }}</title>
+    <meta name="description" content="BAHASA PLAY.AI — Game-Based Learning Management System (LMS) untuk Pembelajaran Bahasa Indonesia SMA Kelas XII. Mainkan gamenya, pelajari bahasanya.">
+    <title>BAHASA PLAY.AI — Game-Based LMS Bahasa Indonesia Kelas XII</title>
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" type="image/svg+xml" href="/icons/icon-192.svg">
     <link rel="apple-touch-icon" href="/icons/icon-192.svg">
     <link rel="preconnect" href="https://fonts.bunny.net">
-    <link href="https://fonts.bunny.net/css?family=plus-jakarta-sans:400,500,600,700,800&display=swap" rel="stylesheet" />
+    <link href="https://fonts.bunny.net/css?family=plus-jakarta-sans:400,500,600,700,800|lilita-one:400&display=swap" rel="stylesheet" />
     @viteReactRefresh
     @vite(['resources/css/app.css', 'resources/js/main.jsx'])
 </head>

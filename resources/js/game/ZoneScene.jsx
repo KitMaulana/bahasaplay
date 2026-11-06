@@ -1,16 +1,21 @@
-import React, { useMemo, useRef, useState } from 'react';
-import { useFrame } from '@react-three/fiber';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { useFrame, useThree } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { useGameStore } from '../stores/gameStore';
 
 import RobloxCharacter from './characters/RobloxCharacter';
+import ElbiraCat from './characters/ElbiraCat';
 import CilegonMap from './world/maps/CilegonMap';
 import SerangMap from './world/maps/SerangMap';
 import TangselMap from './world/maps/TangselMap';
 import LebakMap from './world/maps/LebakMap';
 import PandeglangMap from './world/maps/PandeglangMap';
 import CiruasMap from './world/maps/CiruasMap';
+import Town, { TOWN_LAYOUT, townConfigFor } from './world/Town';
+import { solidAt, cameraBlocked } from './world/worldGrid';
+import FootprintRegister from './world/FootprintRegister';
+import { playerState, cameraInput } from './lib/playerState';
 import { Box, Cyl, Cone, Sphere, SignBoard, StreetLamp, Road, Plaza, Tree, Bench } from './world/Primitives';
 
 /*
@@ -22,7 +27,7 @@ import { Box, Cyl, Cone, Sphere, SignBoard, StreetLamp, Road, Plaza, Tree, Bench
  * - BAB 5: Kabupaten Pandeglang (Taman Literasi & Monumen Badak Cula Satu)
  * - BAB 6: Kabupaten Serang (Kampus SMAN 1 Ciruas)
  */
-function MapStructures({ mapKey }) {
+const MapStructures = memo(function MapStructures({ mapKey }) {
     if (mapKey === 'cilegon' || mapKey === 'alun_cilegon' || mapKey === 'kawasan_industri' || mapKey === 'pusat_kota') {
         return <CilegonMap />;
     }
@@ -42,7 +47,9 @@ function MapStructures({ mapKey }) {
         return <CiruasMap />;
     }
     return <CilegonMap />;
-}
+});
+
+const MemoTown = memo(Town);
 
 /*
  * Papan Rambu Penunjuk Jalan 3D di Persimpangan Utama
@@ -234,7 +241,7 @@ function WayfindingBeacon({ p = [0, 0, 0], color = '#38bdf8', label = 'TUJUAN AN
                     <octahedronGeometry args={[0.7, 0]} />
                     <meshStandardMaterial color={color} emissive={color} emissiveIntensity={1.2} />
                 </mesh>
-                <Html position={[0, 1.2, 0]} center distanceFactor={14}>
+                <Html position={[0, 1.2, 0]} center distanceFactor={14} zIndexRange={[15, 0]}>
                     <div className="px-2.5 py-1 rounded-xl bg-slate-950/95 border border-cyan-400 text-cyan-300 font-extrabold text-[11px] shadow-2xl whitespace-nowrap animate-pulse flex items-center gap-1.5 pointer-events-none">
                         <span>🎯</span>
                         <span>{label}</span>
@@ -243,6 +250,95 @@ function WayfindingBeacon({ p = [0, 0, 0], color = '#38bdf8', label = 'TUJUAN AN
             </group>
         </group>
     );
+}
+
+/*
+ * Kontrol kamera 360° ala Roblox:
+ * - PC/laptop: klik kiri (atau kanan) lalu geser mouse/touchpad untuk memutar kamera; scroll untuk zoom.
+ * - HP/tablet: geser jari di area layar (di luar joystick) untuk memutar kamera; cubit dua jari untuk zoom.
+ * Masukan dikumpulkan ke cameraInput lalu dikonsumsi di useFrame ZoneScene.
+ */
+function CameraPointerControls({ enabled }) {
+    const gl = useThree((st) => st.gl);
+    useEffect(() => {
+        const el = gl.domElement;
+        el.style.touchAction = 'none';
+        el.style.cursor = 'grab';
+        const pointers = new Map();
+        let pinchDist = 0;
+
+        const onDown = (e) => {
+            if (!enabled) return;
+            if (e.pointerType === 'mouse' && e.button !== 0 && e.button !== 2) return;
+            pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            try {
+                el.setPointerCapture(e.pointerId);
+            } catch {
+                /* abaikan */
+            }
+            if (pointers.size === 2) {
+                const [a, b] = [...pointers.values()];
+                pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+            }
+            el.style.cursor = 'grabbing';
+        };
+        const onMove = (e) => {
+            const prev = pointers.get(e.pointerId);
+            if (!prev || !enabled) return;
+            const cur = { x: e.clientX, y: e.clientY };
+            pointers.set(e.pointerId, cur);
+            if (pointers.size >= 2) {
+                const [a, b] = [...pointers.values()];
+                const d = Math.hypot(a.x - b.x, a.y - b.y);
+                if (pinchDist > 0) cameraInput.zoom += (pinchDist - d) * 0.03;
+                pinchDist = d;
+                return;
+            }
+            const touchBoost = e.pointerType === 'touch' ? 1.35 : 1;
+            cameraInput.dx += (cur.x - prev.x) * touchBoost;
+            cameraInput.dy += (cur.y - prev.y) * touchBoost;
+        };
+        const onUp = (e) => {
+            pointers.delete(e.pointerId);
+            if (pointers.size < 2) pinchDist = 0;
+            if (pointers.size === 0) el.style.cursor = 'grab';
+        };
+        const onWheel = (e) => {
+            if (!enabled) return;
+            e.preventDefault();
+            cameraInput.zoom += Math.sign(e.deltaY) * Math.min(2.5, Math.abs(e.deltaY) * 0.012);
+        };
+        const onContext = (e) => e.preventDefault();
+
+        el.addEventListener('pointerdown', onDown);
+        el.addEventListener('pointermove', onMove);
+        el.addEventListener('pointerup', onUp);
+        el.addEventListener('pointercancel', onUp);
+        el.addEventListener('wheel', onWheel, { passive: false });
+        el.addEventListener('contextmenu', onContext);
+        return () => {
+            el.removeEventListener('pointerdown', onDown);
+            el.removeEventListener('pointermove', onMove);
+            el.removeEventListener('pointerup', onUp);
+            el.removeEventListener('pointercancel', onUp);
+            el.removeEventListener('wheel', onWheel);
+            el.removeEventListener('contextmenu', onContext);
+        };
+    }, [gl, enabled]);
+    return null;
+}
+
+const CAM_MIN_PITCH = 0.06;
+const CAM_MAX_PITCH = 1.35;
+const CAM_MIN_DIST = 4;
+const CAM_MAX_DIST = 22;
+
+/** Selisih sudut terpendek (radian) dari a ke b. */
+function angleDelta(a, b) {
+    let d = (b - a) % (Math.PI * 2);
+    if (d > Math.PI) d -= Math.PI * 2;
+    if (d < -Math.PI) d += Math.PI * 2;
+    return d;
 }
 
 export default function ZoneScene({
@@ -256,8 +352,17 @@ export default function ZoneScene({
     practiceReady,
     examReady,
     currentObjective,
+    inputLocked = false,
+    playerName,
+    playerClass,
+    onElbiraOpen,
+    elbiraOpen = false,
 }) {
     const playerRef = useRef();
+    const camYaw = useRef(0);
+    const camPitch = useRef(0.41);
+    const camDist = useRef(9.8);
+    const camDistEff = useRef(9.8);
     const joystickVector = useGameStore((s) => s.joystickVector);
     const setFps = useGameStore((s) => s.setFps);
     const frameCount = useRef(0);
@@ -268,6 +373,8 @@ export default function ZoneScene({
     const [playerPos, setPlayerPos] = useState({ x: 0, z: 12 });
     const [isPlayerMoving, setIsPlayerMoving] = useState(false);
 
+    const town = useMemo(() => townConfigFor(zone?.map_key), [zone?.map_key]);
+    const sunRef = useRef();
     const theme = zone?.config?.theme || {
         sky: '#bae6fd',
         ground: '#86efac',
@@ -339,32 +446,52 @@ export default function ZoneScene({
 
         if (!playerRef.current) return;
 
-        const keys = keysRef.current || {};
-        let moveX = joystickVector.x;
-        let moveZ = joystickVector.z;
-
-        if (keys.KeyW || keys.ArrowUp) moveZ -= 1;
-        if (keys.KeyS || keys.ArrowDown) moveZ += 1;
-        if (keys.KeyA || keys.ArrowLeft) moveX -= 1;
-        if (keys.KeyD || keys.ArrowRight) moveX += 1;
-
-        const len = Math.hypot(moveX, moveZ);
-        if (len > 1) {
-            moveX /= len;
-            moveZ /= len;
+        // --- Kamera: konsumsi masukan pointer (putar & zoom) ---
+        if (!inputLocked) {
+            camYaw.current -= cameraInput.dx * 0.0065;
+            camPitch.current = THREE.MathUtils.clamp(camPitch.current + cameraInput.dy * 0.0045, CAM_MIN_PITCH, CAM_MAX_PITCH);
+            camDist.current = THREE.MathUtils.clamp(camDist.current + cameraInput.zoom, CAM_MIN_DIST, CAM_MAX_DIST);
         }
+        cameraInput.dx = 0;
+        cameraInput.dy = 0;
+        cameraInput.zoom = 0;
+
+        const keys = inputLocked ? {} : keysRef.current || {};
+        let inX = inputLocked ? 0 : joystickVector.x;
+        let inZ = inputLocked ? 0 : joystickVector.z;
+
+        if (keys.KeyW || keys.ArrowUp) inZ -= 1;
+        if (keys.KeyS || keys.ArrowDown) inZ += 1;
+        if (keys.KeyA || keys.ArrowLeft) inX -= 1;
+        if (keys.KeyD || keys.ArrowRight) inX += 1;
+        // Q / Z memutar kamera dengan keyboard (alternatif tanpa mouse)
+        if (keys.KeyQ) camYaw.current += delta * 2.2;
+        if (keys.KeyZ) camYaw.current -= delta * 2.2;
+
+        const len = Math.hypot(inX, inZ);
+        if (len > 1) {
+            inX /= len;
+            inZ /= len;
+        }
+        // Arah gerak relatif terhadap kamera: "maju" = arah pandang kamera.
+        const cy = Math.cos(camYaw.current);
+        const sy = Math.sin(camYaw.current);
+        const moveX = inX * cy + inZ * sy;
+        const moveZ = -inX * sy + inZ * cy;
 
         const speed = 8.5;
-        playerRef.current.position.x = THREE.MathUtils.clamp(
-            playerRef.current.position.x + moveX * speed * delta,
-            -46,
-            46
-        );
-        playerRef.current.position.z = THREE.MathUtils.clamp(
-            playerRef.current.position.z + moveZ * speed * delta,
-            -38,
-            26
-        );
+        const b = TOWN_LAYOUT.bounds;
+        const minX = town.waterWest ? -40 : b.minX;
+        const step = Math.min(delta, 0.1);
+        const px = playerRef.current.position.x;
+        const pz = playerRef.current.position.z;
+        const nx = THREE.MathUtils.clamp(px + moveX * speed * step, minX, b.maxX);
+        const nz = THREE.MathUtils.clamp(pz + moveZ * speed * step, b.minZ, b.maxZ);
+        // Tabrakan per sumbu agar pemain "meluncur" di sepanjang dinding bangunan kota.
+        // Jika pemain terlanjur berada di sel padat (mis. spawn), gerakan tetap diizinkan agar tidak terjebak.
+        const stuck = solidAt(px, pz);
+        if (stuck || !solidAt(nx, pz)) playerRef.current.position.x = nx;
+        if (stuck || !solidAt(playerRef.current.position.x, nz)) playerRef.current.position.z = nz;
 
         const moving = len > 0.05;
         if (moving !== isPlayerMoving) {
@@ -373,18 +500,20 @@ export default function ZoneScene({
 
         if (moving) {
             const targetAngle = Math.atan2(moveX, moveZ);
-            playerRef.current.rotation.y = THREE.MathUtils.lerp(
-                playerRef.current.rotation.y,
-                targetAngle,
-                0.2
-            );
+            const cur = playerRef.current.rotation.y;
+            playerRef.current.rotation.y = cur + angleDelta(cur, targetAngle) * Math.min(1, step * 12);
         }
 
         const currX = playerRef.current.position.x;
         const currZ = playerRef.current.position.z;
 
-        // Beritahu parent koordinat pemain setiap beberapa frame
-        if (frameCount.current % 3 === 0) {
+        playerState.x = currX;
+        playerState.z = currZ;
+        playerState.heading = playerRef.current.rotation.y;
+        playerState.camYaw = camYaw.current;
+
+        // Beritahu parent koordinat pemain secara berkala (HUD jarak & label)
+        if (frameCount.current % 8 === 0) {
             setPlayerPos({ x: currX, z: currZ });
             if (onPlayerMove) onPlayerMove({ x: currX, z: currZ });
         }
@@ -401,27 +530,83 @@ export default function ZoneScene({
         }
         onNearbyTargetChange(closest);
 
-        targetVec.set(currX, playerRef.current.position.y + 1.6, currZ);
-        camPos.set(currX, playerRef.current.position.y + 5.5, currZ + 9.0);
-        state.camera.position.lerp(camPos, 0.12);
+        // --- Kamera orbit orang ketiga (360°) dengan anti-tembus gedung ---
+        const headY = playerRef.current.position.y + 1.6;
+        // Layar potret (HP): kamera lebih jauh & FOV lebih lebar agar karakter tidak memenuhi layar.
+        const portrait = state.size.width < state.size.height;
+        const wantFov = portrait ? 64 : 50;
+        if (state.camera.fov !== wantFov) {
+            state.camera.fov = wantFov;
+            state.camera.updateProjectionMatrix();
+        }
+        const distMul = portrait ? 1.3 : 1;
+        // Titik pandang sedikit di atas kepala: karakter berada agak ke bawah layar sehingga papan nama terlihat.
+        targetVec.set(currX, headY + 1.0, currZ);
+        const cp = Math.cos(camPitch.current);
+        const ux = Math.sin(camYaw.current) * cp;
+        const uy = Math.sin(camPitch.current);
+        const uz = Math.cos(camYaw.current) * cp;
+        const fullDist = camDist.current * distMul;
+        let want = fullDist;
+        for (let k = 1; k <= 12; k += 1) {
+            const dd = (k / 12) * fullDist;
+            if (cameraBlocked(currX + ux * dd, headY + uy * dd, currZ + uz * dd)) {
+                want = Math.max(1.6, dd - 0.8);
+                break;
+            }
+        }
+        // Mendekat cepat saat terhalang, menjauh perlahan saat pandangan kembali lega.
+        camDistEff.current += (want - camDistEff.current) * Math.min(1, step * (want < camDistEff.current ? 18 : 4));
+        const dist = camDistEff.current;
+        camPos.set(currX + ux * dist, Math.max(0.4, headY + uy * dist), currZ + uz * dist);
+        state.camera.position.copy(camPos);
         state.camera.lookAt(targetVec);
+
+        // Matahari (bayangan) mengikuti pemain agar area sekitar selalu berbayang tegas.
+        if (sunRef.current) {
+            sunRef.current.position.set(currX + 24, 36, currZ + 16);
+            sunRef.current.target.position.set(currX, 0, currZ);
+            sunRef.current.target.updateMatrixWorld();
+        }
     });
 
     return (
         <>
             <color attach="background" args={[theme.sky || '#bae6fd']} />
-            <fog attach="fog" args={[theme.sky || '#bae6fd', 35, 110]} />
-            <ambientLight intensity={0.9} />
-            <directionalLight position={[24, 36, 16]} intensity={1.25} castShadow />
+            <fog attach="fog" args={[theme.sky || '#bae6fd', 55, 170]} />
+            <hemisphereLight args={['#ffffff', theme.ground || '#86efac', 0.55]} />
+            <ambientLight intensity={0.45} />
+            <directionalLight
+                ref={sunRef}
+                position={[24, 36, 16]}
+                intensity={1.6}
+                castShadow
+                shadow-mapSize-width={1024}
+                shadow-mapSize-height={1024}
+                shadow-camera-left={-32}
+                shadow-camera-right={32}
+                shadow-camera-top={32}
+                shadow-camera-bottom={-32}
+                shadow-camera-near={1}
+                shadow-camera-far={90}
+                shadow-bias={-0.0006}
+            />
 
-            {/* Lantai Utama Dunia 3D Lebih Luas (140x140) */}
-            <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-                <planeGeometry args={[140, 140]} />
-                <meshStandardMaterial color={theme.ground || '#86efac'} roughness={0.9} />
+            {/* Lantai Utama Dunia 3D (diperluas untuk kota sekitar) */}
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} receiveShadow>
+                <planeGeometry args={[420, 420]} />
+                <meshStandardMaterial color={theme.ground || '#86efac'} roughness={0.95} />
             </mesh>
 
+            {/* Kota sekitar bergaya Roblox Brookhaven: jalan lingkar, rumah warga, toko, fasilitas umum, lalu lintas */}
+            <MemoTown style={town.style} townName={town.townName} waterWest={town.waterWest} playerRef={playerRef} />
+
             {/* Struktur Landmark Peta Sesuai BAB (Cilegon, Serang, Tangsel, Lebak, Pandeglang, Ciruas) */}
-            <MapStructures mapKey={zone?.map_key || 'cilegon'} />
+            <FootprintRegister key={zone?.map_key || 'cilegon'}>
+                <MapStructures mapKey={zone?.map_key || 'cilegon'} />
+            </FootprintRegister>
+
+            <CameraPointerControls enabled={!inputLocked} />
 
             {/* Rambu Penunjuk Jalan 3D di Persimpangan Tengah */}
             <DirectionalSignpost p={[0, 0, 6]} />
@@ -503,7 +688,7 @@ export default function ZoneScene({
                         </mesh>
 
                         {/* Label Papan Materi Gaya Roblox Billboard */}
-                        <Html position={[0, 3.1, 0]} center distanceFactor={16}>
+                        <Html position={[0, 3.1, 0]} center distanceFactor={16} zIndexRange={[15, 0]}>
                             <div className={`px-2.5 py-1 rounded-xl text-center whitespace-nowrap shadow-xl pointer-events-none transition-all ${
                                 isTargetObjective
                                     ? 'bg-slate-950 border-2 border-cyan-400 ring-2 ring-cyan-400/50'
@@ -525,8 +710,8 @@ export default function ZoneScene({
             {/* Karakter Siswa Pemain Gaya Humanoid Roblox Berbaju Batik Banten */}
             <group ref={playerRef} position={[0, 0, 12]}>
                 <RobloxCharacter
-                    name={avatarConfig?.name || 'Siswa SMAN 1 Ciruas'}
-                    roleLabel="Siswa Kelas XII"
+                    name={playerName || 'Siswa'}
+                    roleLabel={playerClass || 'Kelas XII'}
                     isPlayer={true}
                     isMoving={isPlayerMoving}
                     batikPreset="siswa"
@@ -535,6 +720,9 @@ export default function ZoneScene({
                     skinColor={avatarConfig?.skinColor || '#fde68a'}
                 />
             </group>
+
+            {/* Elbira — kucing asisten belajar AI yang mengikuti pemain */}
+            <ElbiraCat onOpen={onElbiraOpen} chatOpen={elbiraOpen} />
         </>
     );
 }

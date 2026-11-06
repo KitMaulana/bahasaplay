@@ -263,6 +263,7 @@ export default function RobloxCharacter({
     skinColor = '#fde68a',
     distance = null,
     isTarget = false,
+    showNameTag = true,
     onClick,
 }) {
     // Preset Batik Banten
@@ -529,7 +530,8 @@ export default function RobloxCharacter({
                     )}
 
                     {/* NAME TAG BILLBOARD GAYA ROBLOX */}
-                    <Html position={[0, 1.35, 0]} center distanceFactor={15}>
+                    {showNameTag && (
+                    <Html position={[0, 1.35, 0]} center distanceFactor={isPlayer ? 8 : 15} zIndexRange={[15, 0]}>
                         <div className={`px-3 py-1 rounded-xl text-center shadow-2xl pointer-events-none transition-all flex flex-col items-center gap-0.5 ${
                             isPlayer
                                 ? 'bg-cyan-950/90 border border-cyan-400 text-white'
@@ -551,10 +553,11 @@ export default function RobloxCharacter({
                                 )}
                             </div>
                             <span className="text-[9px] text-cyan-300 font-medium">
-                                {roleLabel} · Batik Banten
+                                {roleLabel}
                             </span>
                         </div>
                     </Html>
+                    )}
                 </group>
             </group>
         </group>
