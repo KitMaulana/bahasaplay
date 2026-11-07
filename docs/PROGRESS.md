@@ -22,6 +22,13 @@
 
 ## Log sesi
 
+### 2026-11-07 — [Claude Code] — Deploy Hostinger, Perbaikan Timer Ujian & Isolasi Identitas API
+**Selesai:**
+- **Deploy:** repo di GitHub (`KitMaulana/bahasaplay`, branch `master`), `public/build` kini ikut di-commit (server tanpa Node). Situs: https://bahasaplay.ciptakita.id (Hostinger, PHP 8.3). Alur: laptop `npm run build` → `git push origin master` → server `git pull origin master` + `composer install --no-dev` + `php artisan migrate --force` + `config:cache`.
+- **Timer ujian "45.01.3333":** `remaining_seconds` dari Carbon 3 berupa pecahan detik → kini `(int) floor`; `formatTimer` membulatkan; timer di `GameRoot` berbasis waktu akhir absolut (`examEndsAtRef`) + sinkron saat tab aktif lagi.
+- **Progres "tereset" lintas perangkat:** ditemukan & direproduksi bug: `config/sanctum.php` `guard => ['web']` membuat **cookie sesi menimpa token Bearer** — bila browser memiliki sesi akun lain (mis. guru di tab lain), API menjawab sebagai akun itu sementara UI menampilkan nama siswa (progres tampak 0). Kini `guard => []` (hanya token). Ditambah middleware `NoStoreApiResponses` (Cache-Control no-store + Vary Authorization + X-LiteSpeed-Cache-Control) agar cache server/CDN hosting tidak menyajikan respons akun lain. `TestsTestCase::actingAs` default guard sanctum. Tes: `ApiIsolationTest` (3). Total 25 tes / 197 assertions.
+**Catatan:** jangan menjalankan ulang `db:seed` di produksi (seeder `updateOrCreate` mereset nama, sandi=NISN, dan kelas siswa contoh; progres tidak tersentuh). Ganti sandi akun demo & kunci/sandi yang pernah tertulis di chat.
+
 ### 2026-11-06 — [Claude Code] — Backsound SAMAPTA, Login Wajib Sesuai Peran, Galeri Penghargaan
 **Selesai:**
 - **Backsound** (`lib/music.js`, `components/audio/MusicPlayer.jsx`, berkas `public/audio/samapta.mp3`): lagu *Donkgedank - SAMAPTA (No Copyright music)* diputar sejak website dibuka hingga di dalam game, tidak terputus saat pindah halaman, otomatis diulang saat habis. Browser memblokir suara otomatis, sehingga bila autoplay ditolak, lagu mulai pada sentuhan/klik pertama. Tombol bisu (disimpan di localStorage), jeda saat tab tersembunyi, kredit lagu tampil di pemutar & footer beranda; di game tombol ada di HUD atas. Service worker tidak men-cache `/audio/`.
