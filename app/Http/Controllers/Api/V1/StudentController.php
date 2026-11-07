@@ -338,7 +338,9 @@ class StudentController extends Controller
 
         return response()->json([
             'data' => $this->attemptService->formatAttemptForClient($attempt, false),
-            'message' => 'Sesi Ujian Resmi dimulai.',
+            'message' => $attempt->restartedPrevious
+                ? 'Percobaan sebelumnya dibatalkan karena kamu meninggalkan ujian. Ujian dimulai ulang dari awal.'
+                : 'Sesi Ujian Resmi dimulai.',
         ], 201);
     }
 
@@ -358,6 +360,22 @@ class StudentController extends Controller
 
         return response()->json([
             'data' => $this->attemptService->formatAttemptForClient($attempt, $allowReview),
+        ]);
+    }
+
+    public function heartbeat(Request $request, Attempt $attempt): JsonResponse
+    {
+        return response()->json(['data' => $this->attemptService->heartbeat($request->user(), $attempt)]);
+    }
+
+    public function abandonAttempt(Request $request, Attempt $attempt): JsonResponse
+    {
+        $reason = (string) $request->input('reason', 'left_page');
+        $attempt = $this->attemptService->abandonByUser($request->user(), $attempt, $reason);
+
+        return response()->json([
+            'data' => ['status' => $attempt->status],
+            'message' => 'Percobaan ujian dibatalkan. Mulai ulang dari awal untuk mengerjakan lagi.',
         ]);
     }
 

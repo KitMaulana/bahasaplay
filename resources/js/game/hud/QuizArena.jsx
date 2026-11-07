@@ -190,6 +190,12 @@ export default function QuizArena({
                     </div>
                 </div>
 
+                {isExam && !isFinished && (
+                    <div className="rounded-2xl bg-amber-400/15 border-2 border-amber-300/60 px-3 py-2 text-[11px] sm:text-xs font-bold text-amber-100">
+                        ⚠ Jangan menutup jendela, memuat ulang, atau pindah tab. Jika keluar, ujian dibatalkan dan diulang dari awal.
+                    </div>
+                )}
+
                 {/* Navigasi nomor soal */}
                 <div ref={navRef} className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1 [scrollbar-width:thin]">
                     {questions.map((x, i) => {
@@ -366,13 +372,13 @@ export default function QuizArena({
                     <div className="animate-pop w-full max-w-sm rounded-3xl bg-white text-slate-900 p-5 border-b-8 border-slate-300 text-center space-y-3">
                         <Clock className="w-10 h-10 mx-auto text-amber-500" />
                         <h3 className="font-game text-2xl">Tinggalkan Ruang Ujian?</h3>
-                        <p className="text-sm text-slate-600">Waktu ujian tetap berjalan di server. Jawaban yang sudah dipilih tetap tersimpan.</p>
+                        <p className="text-sm text-slate-600">Jika kamu keluar sekarang, ujian <strong>dibatalkan</strong>: semua jawaban dan waktu direset, dan ujian harus diulang dari awal.</p>
                         <div className="flex gap-2 pt-1">
                             <button type="button" onClick={() => setLeaveOpen(false)} className="btn-chunky flex-1 py-3 rounded-2xl bg-gradient-to-b from-emerald-400 to-emerald-600 text-white font-game text-base cursor-pointer">
                                 Lanjut Ujian
                             </button>
                             <button type="button" onClick={onBack} className="btn-chunky flex-1 py-3 rounded-2xl bg-slate-200 font-game text-base cursor-pointer">
-                                Keluar
+                                Keluar & Batalkan
                             </button>
                         </div>
                     </div>

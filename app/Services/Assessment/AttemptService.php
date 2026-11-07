@@ -15,6 +15,9 @@ use Illuminate\Validation\ValidationException;
 
 class AttemptService
 {
+    /** Layar ujian mengirim detak tiap ±10 dtk; lewat batas ini siswa dianggap sudah meninggalkan ujian. */
+    public const HEARTBEAT_STALE_SECONDS = 45;
+
     public function __construct(
         protected QuestionPicker $questionPicker,
         protected ScoringService $scoringService,
@@ -112,11 +115,18 @@ class AttemptService
             ->where('status', 'in_progress')
             ->first();
 
+        // Aturan ujian: siswa yang keluar (tutup jendela/tab, muat ulang, pindah perangkat) TIDAK dapat
+        // melanjutkan. Percobaan lama dibatalkan — jawaban & waktu dibuang — dan ujian dimulai dari awal.
+        // Percobaan yang dibatalkan tidak mengurangi kesempatan ujian. Pengecualian: waktu benar-benar habis
+        // saat siswa masih terhubung → dinilai seperti biasa.
+        $restartedPrevious = false;
         if ($existingActive) {
-            if ($existingActive->expires_at && $now->gt($existingActive->expires_at)) {
+            $timeIsUp = $existingActive->expires_at && $now->gt($existingActive->expires_at);
+            if ($timeIsUp && ! $this->isStale($existingActive)) {
                 $this->scoringService->scoreAttempt($existingActive, 'expired');
             } else {
-                return $existingActive->load(['attemptQuestions.question.options', 'chapter', 'exam']);
+                $this->abandon($existingActive, 'restart');
+                $restartedPrevious = true;
             }
         }
 
@@ -144,7 +154,7 @@ class AttemptService
             ]);
         }
 
-        return DB::transaction(function () use ($user, $exam, $questions) {
+        return DB::transaction(function () use ($user, $exam, $questions, $restartedPrevious) {
             $startedAt = now();
             $expiresAt = $startedAt->copy()->addMinutes(max(1, (int) $exam->duration_minutes));
             if ($exam->ends_at && $expiresAt->gt($exam->ends_at)) {
@@ -159,6 +169,7 @@ class AttemptService
                 'status' => 'in_progress',
                 'started_at' => $startedAt,
                 'expires_at' => $expiresAt,
+                'last_seen_at' => $startedAt,
                 'total_questions' => $questions->count(),
                 'ip_address' => request()?->ip(),
                 'user_agent' => request()?->userAgent(),
@@ -178,8 +189,80 @@ class AttemptService
                 'chapter_id' => $exam->chapter_id,
             ]);
 
+            $attempt->restartedPrevious = $restartedPrevious;
+
             return $attempt->load(['attemptQuestions.question.options', 'chapter', 'exam']);
         });
+    }
+
+    /** Siswa dianggap meninggalkan ujian bila detak terakhir lebih lama dari batas. */
+    public function isStale(Attempt $attempt): bool
+    {
+        if ($attempt->type !== 'exam' || $attempt->status !== 'in_progress') {
+            return false;
+        }
+        $ref = $attempt->last_seen_at ?? $attempt->started_at;
+
+        return $ref !== null && $ref->lt(now()->subSeconds(self::HEARTBEAT_STALE_SECONDS));
+    }
+
+    /** Batalkan percobaan ujian: tidak dinilai, tidak dihitung sebagai kesempatan, dicatat untuk guru. */
+    protected function abandon(Attempt $attempt, string $reason): Attempt
+    {
+        if ($attempt->status !== 'in_progress') {
+            return $attempt;
+        }
+
+        $answered = AttemptQuestion::where('attempt_id', $attempt->id)->whereNotNull('selected_option_id')->count();
+
+        $attempt->update([
+            'status' => 'abandoned',
+            'submitted_at' => now(),
+            'score' => null,
+            'passed' => null,
+        ]);
+
+        ActivityLog::record($attempt->user_id, 'exam.abandoned', 'Attempt', $attempt->id, [
+            'exam_id' => $attempt->exam_id,
+            'chapter_id' => $attempt->chapter_id,
+            'reason' => $reason, // left_page | closed | restart | offline_timeout
+            'answered' => $answered,
+            'total' => $attempt->total_questions,
+        ]);
+
+        return $attempt;
+    }
+
+    /** Dipanggil layar ujian saat siswa meninggalkan halaman (pindah tab / menutup jendela). */
+    public function abandonByUser(User $user, Attempt $attempt, string $reason = 'left_page'): Attempt
+    {
+        if ((int) $attempt->user_id !== (int) $user->id) {
+            abort(403, 'Anda tidak berhak membatalkan sesi milik peserta lain.');
+        }
+        if ($attempt->type !== 'exam') {
+            return $attempt;
+        }
+
+        return $this->abandon($attempt, in_array($reason, ['left_page', 'closed'], true) ? $reason : 'left_page');
+    }
+
+    /** Detak koneksi dari layar ujian; mengembalikan status terbaru agar klien tahu bila sudah dibatalkan. */
+    public function heartbeat(User $user, Attempt $attempt): array
+    {
+        if ((int) $attempt->user_id !== (int) $user->id) {
+            abort(403, 'Anda tidak berhak mengakses sesi milik peserta lain.');
+        }
+
+        if ($attempt->status === 'in_progress' && $attempt->type === 'exam') {
+            $attempt->forceFill(['last_seen_at' => now()])->save();
+        }
+
+        return [
+            'status' => $attempt->status,
+            'remaining_seconds' => $attempt->expires_at && $attempt->status === 'in_progress'
+                ? max(0, (int) floor(now()->diffInSeconds($attempt->expires_at, false)))
+                : 0,
+        ];
     }
 
     public function saveAnswer(
@@ -194,8 +277,14 @@ class AttemptService
 
         if ($attempt->status !== 'in_progress') {
             throw ValidationException::withMessages([
-                'attempt' => ['Sesi pengerjaan sudah selesai dan tidak dapat diubah lagi.'],
+                'attempt' => [$attempt->status === 'abandoned'
+                    ? 'Sesi ujian dibatalkan karena kamu meninggalkan halaman ujian. Mulai ulang dari awal.'
+                    : 'Sesi pengerjaan sudah selesai dan tidak dapat diubah lagi.'],
             ]);
+        }
+
+        if ($attempt->type === 'exam') {
+            $attempt->forceFill(['last_seen_at' => now()])->save();
         }
 
         if ($attempt->expires_at && now()->gt($attempt->expires_at)) {
@@ -236,15 +325,31 @@ class AttemptService
             return $attempt->load(['attemptQuestions.question.options', 'chapter']);
         }
 
-        $finalStatus = ($attempt->expires_at && now()->gt($attempt->expires_at))
-            ? 'expired'
-            : 'submitted';
+        $timeIsUp = $attempt->expires_at && now()->gt($attempt->expires_at);
+        if ($timeIsUp && $this->isStale($attempt)) {
+            return $this->abandon($attempt, 'offline_timeout')->load(['attemptQuestions.question.options', 'chapter']);
+        }
+
+        $finalStatus = $timeIsUp ? 'expired' : 'submitted';
 
         return $this->scoringService->scoreAttempt($attempt, $finalStatus);
     }
 
     public function finalizeExpiredAttempts(): int
     {
+        $handled = 0;
+
+        // 1) Ujian yang ditinggalkan siswa (tidak ada detak) → dibatalkan, tidak dinilai
+        $stale = Attempt::where('status', 'in_progress')
+            ->where('type', 'exam')
+            ->get()
+            ->filter(fn (Attempt $a) => $this->isStale($a));
+        foreach ($stale as $attempt) {
+            $this->abandon($attempt, 'offline_timeout');
+            $handled++;
+        }
+
+        // 2) Sisanya yang waktunya habis (siswa masih terhubung / latihan) → dinilai
         $expired = Attempt::where('status', 'in_progress')
             ->whereNotNull('expires_at')
             ->where('expires_at', '<', now())
@@ -252,9 +357,10 @@ class AttemptService
 
         foreach ($expired as $attempt) {
             $this->scoringService->scoreAttempt($attempt, 'expired');
+            $handled++;
         }
 
-        return $expired->count();
+        return $handled;
     }
 
     public function formatAttemptForClient(Attempt $attempt, bool $allowReview = false): array
@@ -323,6 +429,7 @@ class AttemptService
             'remaining_seconds' => $attempt->expires_at && $attempt->status === 'in_progress'
                 ? max(0, (int) floor(now()->diffInSeconds($attempt->expires_at, false)))
                 : 0,
+            'restarted_previous' => $attempt->restartedPrevious,
             'submitted_at' => $attempt->submitted_at?->toIso8601String(),
             'score' => $isFinished ? $attempt->score : null,
             'correct_count' => $isFinished ? $attempt->correct_count : null,

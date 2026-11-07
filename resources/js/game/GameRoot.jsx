@@ -53,6 +53,7 @@ export default function GameRoot() {
     const [activeAttempt, setActiveAttempt] = useState(null);
     const [currentQIndex, setCurrentQIndex] = useState(0);
     const [remainingSec, setRemainingSec] = useState(0);
+    const [examInterrupted, setExamInterrupted] = useState(false); // ujian dibatalkan karena siswa meninggalkan halaman
     const examEndsAtRef = useRef(0); // waktu akhir ujian (ms epoch), dihitung dari sisa waktu server
     const [toast, setToast] = useState(null);
     const [playerPos, setPlayerPos] = useState({ x: 0, z: 12 });
@@ -139,6 +140,7 @@ export default function GameRoot() {
             const secs = Math.max(0, Math.floor(Number(attempt.remaining_seconds) || 0)) || 2700;
             examEndsAtRef.current = Date.now() + secs * 1000;
             setRemainingSec(secs);
+            setExamInterrupted(false);
             setViewMode('exam');
         },
         onError: (err) => {
@@ -150,6 +152,18 @@ export default function GameRoot() {
         },
     });
 
+    // Konfirmasi aturan ujian sebelum dimulai
+    const requestExamStart = (examId) => {
+        const ok = window.confirm(
+            'ATURAN UJIAN RESMI\n\n' +
+                '• Waktu berjalan sejak ujian dimulai.\n' +
+                '• Jangan menutup jendela, memuat ulang, atau pindah tab/aplikasi.\n' +
+                '• Jika kamu keluar, ujian DIBATALKAN dan harus diulang dari awal (jawaban & waktu direset, soal diacak ulang).\n\n' +
+                'Mulai ujian sekarang?'
+        );
+        if (ok) startExamMutation.mutate(examId);
+    };
+
     const saveAnswerMutation = useMutation({
         mutationFn: async ({ attemptId, attemptQuestionId, selectedLabel }) => {
             const res = await api.put(`/student/attempts/${attemptId}/answers`, {
@@ -157,6 +171,14 @@ export default function GameRoot() {
                 selected_label: selectedLabel,
             });
             return res.data;
+        },
+        onError: (err) => {
+            // 422 = sesi ujian sudah dibatalkan/ditutup server (mis. dimulai ulang di perangkat lain)
+            if (err?.response?.status === 422 && viewMode === 'exam') {
+                setActiveAttempt(null);
+                setExamInterrupted(true);
+                setViewMode('3d');
+            }
         },
     });
 
@@ -202,6 +224,78 @@ export default function GameRoot() {
             document.removeEventListener('visibilitychange', onVisible);
         };
     }, [viewMode, activeAttempt]);
+
+    // Pengawas ujian: siswa yang meninggalkan halaman (pindah tab/aplikasi, tutup/muat ulang jendela)
+    // membatalkan percobaannya. Server juga memantau lewat detak koneksi tiap 10 detik.
+    useEffect(() => {
+        if (viewMode !== 'exam' || !activeAttempt || activeAttempt.status !== 'in_progress') {
+            return undefined;
+        }
+        const attemptId = activeAttempt.id;
+        const LEAVE_GRACE_MS = 3000; // toleransi kedipan singkat (mis. notifikasi sistem)
+        let finished = false;
+        let hiddenAt = 0;
+
+        const interrupt = (reason, notifyServer = true) => {
+            if (finished) return;
+            finished = true;
+            if (notifyServer) api.post(`/student/attempts/${attemptId}/abandon`, { reason }).catch(() => {});
+            setActiveAttempt(null);
+            setExamInterrupted(true);
+            setViewMode('3d');
+        };
+
+        const beat = () => {
+            api.post(`/student/attempts/${attemptId}/heartbeat`)
+                .then((res) => {
+                    if (res.data?.data?.status === 'abandoned') interrupt('left_page', false);
+                })
+                .catch(() => {});
+        };
+        beat();
+        const beatTimer = setInterval(beat, 10000);
+
+        const onVisibility = () => {
+            if (document.hidden) {
+                hiddenAt = Date.now();
+            } else if (hiddenAt && Date.now() - hiddenAt >= LEAVE_GRACE_MS) {
+                interrupt('left_page');
+            } else {
+                hiddenAt = 0;
+            }
+        };
+        document.addEventListener('visibilitychange', onVisibility);
+
+        // Jendela/tab ditutup atau dimuat ulang: kirim pembatalan semampunya (keepalive).
+        const onPageHide = () => {
+            try {
+                const xsrf = decodeURIComponent((document.cookie.match(/XSRF-TOKEN=([^;]+)/) || [])[1] || '');
+                fetch(`/api/v1/student/attempts/${attemptId}/abandon`, {
+                    method: 'POST',
+                    keepalive: true,
+                    credentials: 'include',
+                    headers: {
+                        Accept: 'application/json',
+                        'Content-Type': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'X-XSRF-TOKEN': xsrf,
+                        Authorization: `Bearer ${localStorage.getItem('bahasa_play_token') || ''}`,
+                    },
+                    body: JSON.stringify({ reason: 'closed' }),
+                });
+            } catch {
+                /* server tetap membatalkan lewat pemantauan detak */
+            }
+        };
+        window.addEventListener('pagehide', onPageHide);
+
+        return () => {
+            finished = true;
+            clearInterval(beatTimer);
+            document.removeEventListener('visibilitychange', onVisibility);
+            window.removeEventListener('pagehide', onPageHide);
+        };
+    }, [viewMode, activeAttempt?.id, activeAttempt?.status]);
 
     const totalMaterials = chapter?.materials?.length || 0;
     const completedMaterials = chapter?.materials?.filter((m) => m.is_completed).length || 0;
@@ -336,7 +430,7 @@ export default function GameRoot() {
             }
             const exam = chapter.exams?.[0];
             if (exam) {
-                startExamMutation.mutate(exam.id);
+                requestExamStart(exam.id);
             } else {
                 setToast({ message: 'Belum ada jadwal ujian aktif pada BAB ini.', type: 'error' });
             }
@@ -346,7 +440,7 @@ export default function GameRoot() {
     useEffect(() => {
         const onKeyDown = (e) => {
             const tag = e.target?.tagName;
-            if (elbiraOpen || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+            if (elbiraOpen || examInterrupted || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
             keysRef.current[e.code] = true;
             if (activeMaterial) return;
             if (e.code === 'KeyC' && viewMode === '3d' && !fullMapOpen) {
@@ -369,7 +463,7 @@ export default function GameRoot() {
             window.removeEventListener('keydown', onKeyDown);
             window.removeEventListener('keyup', onKeyUp);
         };
-    }, [nearbyTarget, viewMode, chapter, practiceReady, examReady, materialPercent, activeMaterial, fullMapOpen, elbiraOpen]);
+    }, [nearbyTarget, viewMode, chapter, practiceReady, examReady, materialPercent, activeMaterial, fullMapOpen, elbiraOpen, examInterrupted]);
 
     if (isLoading || !chapter) {
         return (
@@ -434,7 +528,7 @@ export default function GameRoot() {
         pulse: currentObjective?.kind === 'portal_exam',
     });
     const mapObjective = currentObjective?.targetPos ? { x: currentObjective.targetPos[0], z: currentObjective.targetPos[2], color: currentObjective.color || '#38bdf8' } : null;
-    const overlayOpen = Boolean(activeMaterial) || fullMapOpen || elbiraOpen;
+    const overlayOpen = Boolean(activeMaterial) || fullMapOpen || elbiraOpen || examInterrupted;
 
     const handleSelectOption = (attemptQuestionId, label) => {
         if (!activeAttempt || activeAttempt.status !== 'in_progress') return;
@@ -470,9 +564,16 @@ export default function GameRoot() {
                     onSubmit={() => submitAttemptMutation.mutate(activeAttempt.id)}
                     submitting={submitAttemptMutation.isPending}
                     remainingSec={remainingSec}
-                    onBack={() => setViewMode('3d')}
+                    onBack={() => {
+                        // Keluar dari ujian yang sedang berjalan = membatalkan percobaan (diulang dari awal)
+                        if (viewMode === 'exam' && activeAttempt.status === 'in_progress') {
+                            api.post(`/student/attempts/${activeAttempt.id}/abandon`, { reason: 'left_page' }).catch(() => {});
+                            setActiveAttempt(null);
+                        }
+                        setViewMode('3d');
+                    }}
                     onRetry={() => startPracticeMutation.mutate()}
-                    onStartExam={() => activeExam && startExamMutation.mutate(activeExam.id)}
+                    onStartExam={() => activeExam && requestExamStart(activeExam.id)}
                     canStartExam={Boolean(activeExam)}
                 />
             </>
@@ -611,7 +712,7 @@ export default function GameRoot() {
                     {activeExam && (
                         <button
                             type="button"
-                            onClick={() => startExamMutation.mutate(activeExam.id)}
+                            onClick={() => requestExamStart(activeExam.id)}
                             className={`px-3 py-2 rounded-2xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer ${
                                 examReady
                                     ? 'bg-emerald-500/20 border-emerald-400 text-emerald-200'
@@ -801,6 +902,45 @@ export default function GameRoot() {
                                 {nearbyTarget ? `Interaksi: ${nearbyTarget.title.slice(0, 20)} [E]` : 'Dekati NPC / Objek / Portal'}
                             </span>
                         </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Ujian dibatalkan karena siswa meninggalkan halaman */}
+            {examInterrupted && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/90 backdrop-blur-sm p-4">
+                    <div className="animate-pop w-full max-w-md rounded-[2rem] bg-white text-banten-night border-4 border-banten-night shadow-[0_10px_0_0_#10213a] overflow-hidden">
+                        <div className="bg-rose-600 px-5 py-3 text-center">
+                            <p className="font-game text-2xl text-white tracking-wide">Ujian Dibatalkan</p>
+                        </div>
+                        <div className="p-5 space-y-3 text-sm">
+                            <p className="font-bold">Kamu meninggalkan halaman ujian (pindah tab/aplikasi, menutup atau memuat ulang jendela).</p>
+                            <ul className="space-y-1.5 text-slate-700">
+                                <li>• Semua jawaban dan sisa waktu <strong>direset</strong>.</li>
+                                <li>• Ujian harus diulang dari awal, soal diacak ulang.</li>
+                                <li>• Percobaan ini tidak mengurangi kesempatan ujianmu.</li>
+                                <li>• Kejadian ini tercatat dan dapat dilihat guru.</li>
+                            </ul>
+                            <div className="flex flex-col sm:flex-row gap-2 pt-2">
+                                {activeExam && (
+                                    <button
+                                        type="button"
+                                        onClick={() => startExamMutation.mutate(activeExam.id)}
+                                        disabled={startExamMutation.isPending}
+                                        className="btn-chunky flex-1 px-4 py-3 rounded-2xl bg-gradient-to-b from-lime-300 to-green-600 border-4 border-banten-night font-game text-lg text-white cursor-pointer disabled:opacity-60"
+                                    >
+                                        {startExamMutation.isPending ? 'Memulai...' : 'Mulai Ulang Ujian'}
+                                    </button>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={() => setExamInterrupted(false)}
+                                    className="btn-chunky flex-1 px-4 py-3 rounded-2xl bg-slate-100 border-4 border-banten-night font-game text-lg cursor-pointer"
+                                >
+                                    Kembali Menjelajah
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}

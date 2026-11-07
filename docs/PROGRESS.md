@@ -22,6 +22,13 @@
 
 ## Log sesi
 
+### 2026-11-07 (2) — [Claude Code] — Aturan Ujian: Keluar = Ulang dari Awal
+**Selesai:**
+- Siswa yang meninggalkan ujian (pindah tab/aplikasi >3 dtk, tutup/muat ulang jendela, keluar lewat tombol kembali, atau mulai ujian dari perangkat lain) **tidak bisa melanjutkan**: percobaan berstatus `abandoned` (tidak dinilai, tidak mengurangi `max_attempts`), jawaban & waktu direset, soal diacak ulang. Dicatat `exam.abandoned` (alasan, jumlah terjawab) untuk guru.
+- Server: migrasi `attempts.last_seen_at`; `AttemptService::{heartbeat,abandonByUser,isStale,abandon}`; `startExam` membatalkan percobaan lama (bukan melanjutkan); `finalizeExpiredAttempts` membatalkan ujian tanpa detak >45 dtk (tidak dinilai) dan hanya menilai yang waktunya habis saat siswa masih terhubung; endpoint `POST /student/attempts/{id}/heartbeat|abandon`. Klien: detak tiap 10 dtk, deteksi visibilitychange/pagehide (fetch keepalive), konfirmasi aturan sebelum mulai, banner peringatan, overlay "Ujian Dibatalkan" + "Mulai Ulang Ujian".
+- Tes `ExamLeaveRulesTest` (4). Total 29 tes / 225 assertions. Diuji di Chrome headless (mulai ujian → pindah tab → overlay → mulai ulang, timer 44:51 bulat).
+**Catatan operasional:** di server wajib jalankan `php artisan migrate --force` setelah pull. Aktifkan cron Hostinger `* * * * * cd <folder> && php artisan schedule:run` agar ujian yang ditinggalkan dibatalkan otomatis (tanpa cron, tetap dibatalkan saat siswa memulai ulang).
+
 ### 2026-11-07 — [Claude Code] — Deploy Hostinger, Perbaikan Timer Ujian & Isolasi Identitas API
 **Selesai:**
 - **Deploy:** repo di GitHub (`KitMaulana/bahasaplay`, branch `master`), `public/build` kini ikut di-commit (server tanpa Node). Situs: https://bahasaplay.ciptakita.id (Hostinger, PHP 8.3). Alur: laptop `npm run build` → `git push origin master` → server `git pull origin master` + `composer install --no-dev` + `php artisan migrate --force` + `config:cache`.

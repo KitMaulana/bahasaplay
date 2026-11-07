@@ -11,6 +11,9 @@ class Attempt extends Model
 {
     use HasFactory;
 
+    /** Bukan kolom DB: true bila percobaan sebelumnya dibatalkan karena siswa meninggalkan ujian. */
+    public bool $restartedPrevious = false;
+
     protected $fillable = [
         'user_id',
         'chapter_id',
@@ -19,6 +22,7 @@ class Attempt extends Model
         'status',
         'started_at',
         'expires_at',
+        'last_seen_at',
         'submitted_at',
         'score',
         'correct_count',
@@ -33,6 +37,7 @@ class Attempt extends Model
         return [
             'started_at' => 'datetime',
             'expires_at' => 'datetime',
+            'last_seen_at' => 'datetime',
             'submitted_at' => 'datetime',
             'score' => 'float',
             'correct_count' => 'integer',

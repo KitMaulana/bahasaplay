@@ -43,6 +43,8 @@ Route::prefix('v1')->group(function () {
             Route::get('/attempts/{attempt}', [StudentController::class, 'showAttempt']);
             Route::put('/attempts/{attempt}/answers', [StudentController::class, 'saveAnswer']);
             Route::post('/attempts/{attempt}/submit', [StudentController::class, 'submitAttempt']);
+            Route::post('/attempts/{attempt}/heartbeat', [StudentController::class, 'heartbeat']);
+            Route::post('/attempts/{attempt}/abandon', [StudentController::class, 'abandonAttempt']);
 
             // Elbira — kucing asisten belajar AI (dibatasi 15 pesan/menit per pengguna)
             Route::post('/elbira/chat', [StudentController::class, 'elbiraChat'])->middleware('throttle:15,1');
