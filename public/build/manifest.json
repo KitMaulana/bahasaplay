@@ -1,35 +1,35 @@
 {
-  "_plus-DTe9newM.js": {
-    "file": "assets/plus-DTe9newM.js",
+  "_plus-BEEJ2SXJ.js": {
+    "file": "assets/plus-BEEJ2SXJ.js",
     "name": "plus",
     "imports": [
       "resources/js/main.jsx"
     ]
   },
-  "_trash-2-f34r4ooC.js": {
-    "file": "assets/trash-2-f34r4ooC.js",
+  "_trash-2-C_YszC3q.js": {
+    "file": "assets/trash-2-C_YszC3q.js",
     "name": "trash-2",
     "imports": [
       "resources/js/main.jsx"
     ]
   },
   "resources/css/app.css": {
-    "file": "assets/app-DsrRF2OS.css",
+    "file": "assets/app-gkQcM5yK.css",
     "src": "resources/css/app.css",
     "isEntry": true
   },
   "resources/js/game/GameRoot.jsx": {
-    "file": "assets/GameRoot-DpuPh1gk.js",
+    "file": "assets/GameRoot-DIcggNTa.js",
     "name": "GameRoot",
     "src": "resources/js/game/GameRoot.jsx",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/main.jsx",
-      "_trash-2-f34r4ooC.js"
+      "_trash-2-C_YszC3q.js"
     ]
   },
   "resources/js/main.jsx": {
-    "file": "assets/main-BRVzrPBW.js",
+    "file": "assets/main-_d-tGHFD.js",
     "name": "main",
     "src": "resources/js/main.jsx",
     "isEntry": true,
@@ -41,29 +41,29 @@
     ]
   },
   "resources/js/pages/AdminDashboardPage.jsx": {
-    "file": "assets/AdminDashboardPage-BLgrvIJT.js",
+    "file": "assets/AdminDashboardPage-CCZjMrqg.js",
     "name": "AdminDashboardPage",
     "src": "resources/js/pages/AdminDashboardPage.jsx",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/main.jsx",
-      "_plus-DTe9newM.js",
-      "_trash-2-f34r4ooC.js"
+      "_plus-BEEJ2SXJ.js",
+      "_trash-2-C_YszC3q.js"
     ]
   },
   "resources/js/pages/TeacherDashboardPage.jsx": {
-    "file": "assets/TeacherDashboardPage-8Vk9DSOU.js",
+    "file": "assets/TeacherDashboardPage-BA8yxo1W.js",
     "name": "TeacherDashboardPage",
     "src": "resources/js/pages/TeacherDashboardPage.jsx",
     "isDynamicEntry": true,
     "imports": [
       "resources/js/main.jsx",
-      "_trash-2-f34r4ooC.js",
-      "_plus-DTe9newM.js"
+      "_trash-2-C_YszC3q.js",
+      "_plus-BEEJ2SXJ.js"
     ]
   },
   "resources/js/pages/TeacherProfilePage.jsx": {
-    "file": "assets/TeacherProfilePage-TmRitCMT.js",
+    "file": "assets/TeacherProfilePage-C1UnnHhv.js",
     "name": "TeacherProfilePage",
     "src": "resources/js/pages/TeacherProfilePage.jsx",
     "isDynamicEntry": true,

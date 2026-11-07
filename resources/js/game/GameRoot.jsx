@@ -53,6 +53,7 @@ export default function GameRoot() {
     const [activeAttempt, setActiveAttempt] = useState(null);
     const [currentQIndex, setCurrentQIndex] = useState(0);
     const [remainingSec, setRemainingSec] = useState(0);
+    const examEndsAtRef = useRef(0); // waktu akhir ujian (ms epoch), dihitung dari sisa waktu server
     const [toast, setToast] = useState(null);
     const [playerPos, setPlayerPos] = useState({ x: 0, z: 12 });
     const [fullMapOpen, setFullMapOpen] = useState(false);
@@ -135,7 +136,9 @@ export default function GameRoot() {
         onSuccess: (attempt) => {
             setActiveAttempt(attempt);
             setCurrentQIndex(0);
-            setRemainingSec(attempt.remaining_seconds || 2700);
+            const secs = Math.max(0, Math.floor(Number(attempt.remaining_seconds) || 0)) || 2700;
+            examEndsAtRef.current = Date.now() + secs * 1000;
+            setRemainingSec(secs);
             setViewMode('exam');
         },
         onError: (err) => {
@@ -180,17 +183,24 @@ export default function GameRoot() {
         if (viewMode !== 'exam' || !activeAttempt || activeAttempt.status !== 'in_progress') {
             return undefined;
         }
-        const timer = setInterval(() => {
-            setRemainingSec((prev) => {
-                if (prev <= 1) {
-                    clearInterval(timer);
-                    submitAttemptMutation.mutate(activeAttempt.id);
-                    return 0;
-                }
-                return prev - 1;
-            });
-        }, 1000);
-        return () => clearInterval(timer);
+        let submitted = false;
+        const tick = () => {
+            const left = Math.max(0, Math.ceil((examEndsAtRef.current - Date.now()) / 1000));
+            setRemainingSec(left);
+            if (left <= 0 && !submitted) {
+                submitted = true;
+                clearInterval(timer);
+                submitAttemptMutation.mutate(activeAttempt.id);
+            }
+        };
+        const timer = setInterval(tick, 1000);
+        // Saat tab/tablet aktif kembali, segera sinkronkan (interval ditahan browser saat tidur)
+        const onVisible = () => !document.hidden && tick();
+        document.addEventListener('visibilitychange', onVisible);
+        return () => {
+            clearInterval(timer);
+            document.removeEventListener('visibilitychange', onVisible);
+        };
     }, [viewMode, activeAttempt]);
 
     const totalMaterials = chapter?.materials?.length || 0;

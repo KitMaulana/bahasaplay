@@ -37,7 +37,9 @@ return [
     |
     */
 
-    'guard' => ['web'],
+    // Kosong = API hanya memercayai token Bearer, BUKAN cookie sesi. Dengan begitu dua akun yang
+    // login di satu browser (mis. guru & siswa di tab berbeda) tidak saling menimpa identitas API.
+    'guard' => [],
 
     /*
     |--------------------------------------------------------------------------

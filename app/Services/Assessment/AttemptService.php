@@ -321,7 +321,7 @@ class AttemptService
             'started_at' => $attempt->started_at?->toIso8601String(),
             'expires_at' => $attempt->expires_at?->toIso8601String(),
             'remaining_seconds' => $attempt->expires_at && $attempt->status === 'in_progress'
-                ? max(0, now()->diffInSeconds($attempt->expires_at, false))
+                ? max(0, (int) floor(now()->diffInSeconds($attempt->expires_at, false)))
                 : 0,
             'submitted_at' => $attempt->submitted_at?->toIso8601String(),
             'score' => $isFinished ? $attempt->score : null,
